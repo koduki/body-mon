@@ -34,6 +34,7 @@ class HealthRepository(
     val messages: Flow<List<ChatMessageEntity>> = dao.observeMessages()
 
     fun availability(): HealthConnectAvailability = gateway.availability()
+    fun corePermissions(): Set<String> = gateway.corePermissions
     fun requestedPermissions(): Set<String> = gateway.requestedPermissions()
     suspend fun grantedPermissions(): Set<String> = gateway.grantedPermissions()
     suspend fun hasCorePermissions(): Boolean = gateway.hasCorePermissions()
@@ -89,6 +90,9 @@ class HealthRepository(
 
     suspend fun getRecentMessages(limit: Int = 20): List<ChatMessageEntity> =
         dao.getRecentMessages(limit).sortedBy { it.id }
+
+    suspend fun getMessagesAfter(afterId: Long): List<ChatMessageEntity> =
+        dao.getMessagesAfter(afterId)
 
     suspend fun messageCount(): Int = dao.messageCount()
     suspend fun getMemory(): ConversationMemoryEntity? = dao.getMemory()
