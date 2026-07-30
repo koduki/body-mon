@@ -107,14 +107,17 @@ class GeminiClient(
     ): String {
         val transcript = messages.joinToString("\n") { "${it.role}: ${it.text}" }
         val prompt = """
-            次の健康コーチ会話を、次回以降の会話に必要な長期メモリーへ圧縮してください。
-            数値の一時的な値より、利用者の目標、期限、好み、制約、継続中の方針を優先します。
-            事実を追加せず、日本語の箇条書きで800文字以内にしてください。
+            次の利用者発言から、健康コーチングに継続利用できる確認済み情報を更新してください。
+            食事、睡眠、運動、仕事、生活リズム、好み、制約、目標、継続中の方針を優先します。
+            利用者の訂正や新しい発言は古い記述より優先してください。
+            アシスタントの提案や推測を利用者の習慣として記録してはいけません。
+            一時的な健康数値、根拠のない因果関係、センシティブな推測を追加しないでください。
+            日本語の短い箇条書きで800文字以内にしてください。
 
             既存メモリー:
             ${currentMemory.orEmpty()}
 
-            会話:
+            新しい利用者発言:
             $transcript
         """.trimIndent()
         val result = generate(
@@ -218,6 +221,10 @@ class GeminiClient(
                 add(function("get_body_composition", "指定期間の体重、脂肪量、除脂肪量を取得します"))
                 add(function("get_activity_summary", "指定期間の歩数、距離、活動消費を取得します"))
                 add(function("get_exercise_summary", "指定期間の運動回数と運動時間を取得します"))
+                add(function("get_sleep_summary", "指定期間の睡眠時間を取得します"))
+                add(function("get_heart_rate_summary", "指定期間の心拍数を取得します"))
+                add(function("get_activity_intensity_summary", "指定期間の中強度・高強度活動時間を取得します"))
+                add(function("get_metabolism_summary", "指定期間の基礎代謝を取得します"))
                 add(buildJsonObject {
                     put("name", "get_goal_progress")
                     put("description", "現在の目標と直近の進捗を取得します")
@@ -255,6 +262,11 @@ class GeminiClient(
                 put("items", stringSchema())
                 put("maxItems", 3)
             })
+            put("habitInsights", buildJsonObject {
+                put("type", "array")
+                put("items", stringSchema())
+                put("maxItems", 3)
+            })
             put("confidence", buildJsonObject {
                 put("type", "string")
                 put("enum", buildJsonArray { add("high"); add("medium"); add("low") })
@@ -267,6 +279,7 @@ class GeminiClient(
         put("required", buildJsonArray {
             add("summary")
             add("nextActions")
+            add("habitInsights")
             add("confidence")
             add("dataLimitations")
         })
