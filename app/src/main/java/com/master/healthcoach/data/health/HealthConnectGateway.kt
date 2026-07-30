@@ -3,14 +3,18 @@ package com.master.healthcoach.data.health
 import android.content.Context
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
+import androidx.health.connect.client.aggregate.AggregateMetric
 import androidx.health.connect.client.aggregate.AggregationResult
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.ActiveCaloriesBurnedRecord
+import androidx.health.connect.client.records.ActivityIntensityRecord
+import androidx.health.connect.client.records.BasalMetabolicRateRecord
 import androidx.health.connect.client.records.BodyFatRecord
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
-import androidx.health.connect.client.records.LeanBodyMassRecord
+import androidx.health.connect.client.records.HeartRateRecord
 import androidx.health.connect.client.records.Record
+import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.AggregateRequest
@@ -18,8 +22,8 @@ import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.master.healthcoach.data.db.BodyCompositionEntity
 import com.master.healthcoach.data.db.DailyHealthSummaryEntity
-import com.master.healthcoach.data.db.HealthSourceStatusEntity
 import com.master.healthcoach.data.db.ExerciseSessionEntity
+import com.master.healthcoach.data.db.HealthSourceStatusEntity
 import com.master.healthcoach.domain.BodyCompositionCalculator
 import com.master.healthcoach.domain.TimedMeasurement
 import java.time.Duration
@@ -46,12 +50,20 @@ class HealthConnectGateway(private val context: Context) {
     val corePermissions: Set<String> = setOf(
         HealthPermission.getReadPermission(WeightRecord::class),
         HealthPermission.getReadPermission(BodyFatRecord::class),
-        HealthPermission.getReadPermission(LeanBodyMassRecord::class),
         HealthPermission.getReadPermission(StepsRecord::class),
         HealthPermission.getReadPermission(DistanceRecord::class),
         HealthPermission.getReadPermission(ExerciseSessionRecord::class),
         HealthPermission.getReadPermission(ActiveCaloriesBurnedRecord::class),
     )
+
+    private val sleepPermission =
+        HealthPermission.getReadPermission(SleepSessionRecord::class)
+    private val heartRatePermission =
+        HealthPermission.getReadPermission(HeartRateRecord::class)
+    private val basalMetabolicRatePermission =
+        HealthPermission.getReadPermission(BasalMetabolicRateRecord::class)
+    private val activityIntensityPermission =
+        HealthPermission.getReadPermission(ActivityIntensityRecord::class)
 
     fun availability(): HealthConnectAvailability = when (
         HealthConnectClient.getSdkStatus(context)
@@ -68,8 +80,18 @@ class HealthConnectGateway(private val context: Context) {
                 HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND,
             ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
 
+    fun activityIntensityAvailable(): Boolean =
+        availability() == HealthConnectAvailability.AVAILABLE &&
+            client.features.getFeatureStatus(
+                HealthConnectFeatures.FEATURE_ACTIVITY_INTENSITY,
+            ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+
     fun requestedPermissions(): Set<String> = buildSet {
         addAll(corePermissions)
+        add(sleepPermission)
+        add(heartRatePermission)
+        add(basalMetabolicRatePermission)
+        if (activityIntensityAvailable()) add(activityIntensityPermission)
         if (backgroundReadAvailable()) {
             add(HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND)
         }
@@ -92,6 +114,15 @@ class HealthConnectGateway(private val context: Context) {
         check(availability() == HealthConnectAvailability.AVAILABLE) {
             "Health Connect is not available"
         }
+        val granted = grantedPermissions()
+        check(granted.containsAll(corePermissions)) {
+            "Health Connectの必須データ権限が不足しています"
+        }
+        val canReadSleep = sleepPermission in granted
+        val canReadHeartRate = heartRatePermission in granted
+        val canReadBasalRate = basalMetabolicRatePermission in granted
+        val intensitySupported = activityIntensityAvailable()
+        val canReadIntensity = intensitySupported && activityIntensityPermission in granted
 
         val endDateExclusive = LocalDate.now(zoneId).plusDays(1)
         val startDate = endDateExclusive.minusDays(days)
@@ -100,17 +131,39 @@ class HealthConnectGateway(private val context: Context) {
 
         val weights = readAll<WeightRecord>(start, end)
         val bodyFats = readAll<BodyFatRecord>(start, end)
-        val leanMasses = readAll<LeanBodyMassRecord>(start, end)
         val exercises = readAll<ExerciseSessionRecord>(start, end)
         val stepRecords = readAll<StepsRecord>(start, end)
         val distanceRecords = readAll<DistanceRecord>(start, end)
         val activeCalorieRecords = readAll<ActiveCaloriesBurnedRecord>(start, end)
+        val sleepRecords = readIfGranted<SleepSessionRecord>(
+            canReadSleep,
+            start.minus(Duration.ofDays(1)),
+            end,
+        )
+        val heartRateRecords = readIfGranted<HeartRateRecord>(canReadHeartRate, start, end)
+        val basalRateRecords = readIfGranted<BasalMetabolicRateRecord>(
+            canReadBasalRate,
+            start,
+            end,
+        )
+        val intensityRecords = readIfGranted<ActivityIntensityRecord>(
+            canReadIntensity,
+            start,
+            end,
+        )
 
         val daily = (0 until days).map { offset ->
             val date = startDate.plusDays(offset)
             val dayStart = date.atStartOfDay(zoneId).toInstant()
             val dayEnd = date.plusDays(1).atStartOfDay(zoneId).toInstant()
-            val result = aggregateActivity(dayStart, dayEnd)
+            val result = aggregateDaily(
+                start = dayStart,
+                end = dayEnd,
+                includeSleep = canReadSleep,
+                includeHeartRate = canReadHeartRate,
+                includeBasalRate = canReadBasalRate,
+                includeIntensity = canReadIntensity,
+            )
             val sessions = exercises.filter { session ->
                 session.startTime >= dayStart && session.startTime < dayEnd
             }
@@ -123,20 +176,25 @@ class HealthConnectGateway(private val context: Context) {
             val allMinutes = sessions.sumOf {
                 Duration.between(it.startTime, it.endTime).toMinutes().coerceAtLeast(0)
             }
-            val origins = (
-                sessions.filter { it.startTime >= dayStart && it.startTime < dayEnd }
-                    .map { it.metadata.dataOrigin.packageName } +
-                    stepRecords.filter { it.startTime >= dayStart && it.startTime < dayEnd }
-                        .map { it.metadata.dataOrigin.packageName } +
-                    distanceRecords.filter { it.startTime >= dayStart && it.startTime < dayEnd }
-                        .map { it.metadata.dataOrigin.packageName } +
-                    activeCalorieRecords.filter {
-                        it.startTime >= dayStart && it.startTime < dayEnd
-                    }.map { it.metadata.dataOrigin.packageName }
-                )
-                .distinct()
-                .sorted()
-                .joinToString(", ")
+            val origins = buildList {
+                addAll(sessions.map { it.metadata.dataOrigin.packageName })
+                addAll(stepRecords.inDay(dayStart, dayEnd) { it.startTime }
+                    .map { it.metadata.dataOrigin.packageName })
+                addAll(distanceRecords.inDay(dayStart, dayEnd) { it.startTime }
+                    .map { it.metadata.dataOrigin.packageName })
+                addAll(activeCalorieRecords.inDay(dayStart, dayEnd) { it.startTime }
+                    .map { it.metadata.dataOrigin.packageName })
+                addAll(sleepRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }
+                    .map { it.metadata.dataOrigin.packageName })
+                addAll(heartRateRecords.filter {
+                    it.startTime < dayEnd && it.endTime > dayStart
+                }.map { it.metadata.dataOrigin.packageName })
+                addAll(basalRateRecords.inDay(dayStart, dayEnd) { it.time }
+                    .map { it.metadata.dataOrigin.packageName })
+                addAll(intensityRecords.filter {
+                    it.startTime < dayEnd && it.endTime > dayStart
+                }.map { it.metadata.dataOrigin.packageName })
+            }.distinct().sorted().joinToString(", ")
 
             DailyHealthSummaryEntity(
                 date = date.toString(),
@@ -149,6 +207,20 @@ class HealthConnectGateway(private val context: Context) {
                 strengthMinutes = strengthMinutes,
                 cardioMinutes = cardioMinutes,
                 exerciseSessionCount = sessions.size,
+                sleepMinutes = result[SleepSessionRecord.SLEEP_DURATION_TOTAL]?.toMinutes(),
+                moderateIntensityMinutes = result[
+                    ActivityIntensityRecord.MODERATE_DURATION_TOTAL
+                ]?.toMinutes(),
+                vigorousIntensityMinutes = result[
+                    ActivityIntensityRecord.VIGOROUS_DURATION_TOTAL
+                ]?.toMinutes(),
+                heartRateAverageBpm = result[HeartRateRecord.BPM_AVG],
+                heartRateMinimumBpm = result[HeartRateRecord.BPM_MIN],
+                heartRateMaximumBpm = result[HeartRateRecord.BPM_MAX],
+                heartRateMeasurementCount = result[HeartRateRecord.MEASUREMENTS_COUNT],
+                basalCaloriesKcal = result[
+                    BasalMetabolicRateRecord.BASAL_CALORIES_TOTAL
+                ]?.inKilocalories,
                 dataOrigins = origins,
                 updatedAtEpochMillis = System.currentTimeMillis(),
             )
@@ -173,13 +245,6 @@ class HealthConnectGateway(private val context: Context) {
                         it.metadata.dataOrigin.packageName,
                     )
                 },
-                leanMasses = leanMasses.filterIn(dayStart, dayEnd) {
-                    TimedMeasurement(
-                        it.time.toEpochMilli(),
-                        it.mass.inKilograms,
-                        it.metadata.dataOrigin.packageName,
-                    )
-                },
             )
             if (calculation.weightKg == null) return@mapNotNull null
             BodyCompositionEntity(
@@ -198,8 +263,23 @@ class HealthConnectGateway(private val context: Context) {
         val sources = listOf(
             sourceStatus("体重", weights, { it.time }, { it.metadata.dataOrigin.packageName }, checkedAt),
             sourceStatus("体脂肪率", bodyFats, { it.time }, { it.metadata.dataOrigin.packageName }, checkedAt),
-            sourceStatus("除脂肪量", leanMasses, { it.time }, { it.metadata.dataOrigin.packageName }, checkedAt),
-            sourceStatus("運動セッション", exercises, { it.startTime }, { it.metadata.dataOrigin.packageName }, checkedAt),
+            HealthSourceStatusEntity(
+                recordType = "除脂肪量（計算）",
+                recordCount = body.count { it.leanBodyMassKg != null },
+                latestRecordEpochMillis = body.mapNotNull {
+                    it.measurementEpochMillis
+                }.maxOrNull(),
+                origins = body.mapNotNull { it.dataOrigin }.distinct().joinToString(", "),
+                status = if (body.any { it.leanBodyMassKg != null }) "計算可能" else "未取得",
+                checkedAtEpochMillis = checkedAt,
+            ),
+            sourceStatus(
+                "運動セッション",
+                exercises,
+                { it.startTime },
+                { it.metadata.dataOrigin.packageName },
+                checkedAt,
+            ),
             sourceStatus("歩数", stepRecords, { it.startTime }, { it.metadata.dataOrigin.packageName }, checkedAt),
             sourceStatus("距離", distanceRecords, { it.startTime }, { it.metadata.dataOrigin.packageName }, checkedAt),
             sourceStatus(
@@ -208,6 +288,42 @@ class HealthConnectGateway(private val context: Context) {
                 { it.startTime },
                 { it.metadata.dataOrigin.packageName },
                 checkedAt,
+            ),
+            sourceStatus(
+                "睡眠",
+                sleepRecords,
+                { it.endTime },
+                { it.metadata.dataOrigin.packageName },
+                checkedAt,
+                if (canReadSleep) null else "権限なし",
+            ),
+            sourceStatus(
+                "心拍数",
+                heartRateRecords,
+                { it.endTime },
+                { it.metadata.dataOrigin.packageName },
+                checkedAt,
+                if (canReadHeartRate) null else "権限なし",
+            ),
+            sourceStatus(
+                "基礎代謝",
+                basalRateRecords,
+                { it.time },
+                { it.metadata.dataOrigin.packageName },
+                checkedAt,
+                if (canReadBasalRate) null else "権限なし",
+            ),
+            sourceStatus(
+                "アクティビティ強度",
+                intensityRecords,
+                { it.endTime },
+                { it.metadata.dataOrigin.packageName },
+                checkedAt,
+                when {
+                    !intensitySupported -> "端末非対応"
+                    !canReadIntensity -> "権限なし"
+                    else -> null
+                },
             ),
         )
 
@@ -234,17 +350,46 @@ class HealthConnectGateway(private val context: Context) {
         )
     }
 
-    private suspend fun aggregateActivity(start: Instant, end: Instant): AggregationResult =
-        client.aggregate(
+    private suspend fun aggregateDaily(
+        start: Instant,
+        end: Instant,
+        includeSleep: Boolean,
+        includeHeartRate: Boolean,
+        includeBasalRate: Boolean,
+        includeIntensity: Boolean,
+    ): AggregationResult {
+        val metrics = buildSet<AggregateMetric<*>> {
+            add(StepsRecord.COUNT_TOTAL)
+            add(DistanceRecord.DISTANCE_TOTAL)
+            add(ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL)
+            if (includeSleep) add(SleepSessionRecord.SLEEP_DURATION_TOTAL)
+            if (includeHeartRate) {
+                add(HeartRateRecord.BPM_AVG)
+                add(HeartRateRecord.BPM_MIN)
+                add(HeartRateRecord.BPM_MAX)
+                add(HeartRateRecord.MEASUREMENTS_COUNT)
+            }
+            if (includeBasalRate) {
+                add(BasalMetabolicRateRecord.BASAL_CALORIES_TOTAL)
+            }
+            if (includeIntensity) {
+                add(ActivityIntensityRecord.MODERATE_DURATION_TOTAL)
+                add(ActivityIntensityRecord.VIGOROUS_DURATION_TOTAL)
+            }
+        }
+        return client.aggregate(
             AggregateRequest(
-                metrics = setOf(
-                    StepsRecord.COUNT_TOTAL,
-                    DistanceRecord.DISTANCE_TOTAL,
-                    ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL,
-                ),
+                metrics = metrics,
                 timeRangeFilter = TimeRangeFilter.between(start, end),
             ),
         )
+    }
+
+    private suspend inline fun <reified T : Record> readIfGranted(
+        granted: Boolean,
+        start: Instant,
+        end: Instant,
+    ): List<T> = if (granted) readAll(start, end) else emptyList()
 
     private suspend inline fun <reified T : Record> readAll(
         start: Instant,
@@ -276,18 +421,25 @@ class HealthConnectGateway(private val context: Context) {
         instant >= start && instant < end
     }
 
+    private inline fun <T> List<T>.inDay(
+        start: Instant,
+        end: Instant,
+        time: (T) -> Instant,
+    ): List<T> = filter { time(it) >= start && time(it) < end }
+
     private fun <T> sourceStatus(
         label: String,
         records: List<T>,
         time: (T) -> Instant,
         origin: (T) -> String,
         checkedAt: Long,
+        stateOverride: String? = null,
     ): HealthSourceStatusEntity = HealthSourceStatusEntity(
         recordType = label,
         recordCount = records.size,
         latestRecordEpochMillis = records.maxOfOrNull { time(it).toEpochMilli() },
         origins = records.map(origin).distinct().sorted().joinToString(", "),
-        status = if (records.isEmpty()) "未取得" else "取得可能",
+        status = stateOverride ?: if (records.isEmpty()) "未取得" else "取得可能",
         checkedAtEpochMillis = checkedAt,
     )
 
