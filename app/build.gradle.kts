@@ -74,7 +74,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    implementation("androidx.health.connect:connect-client:1.1.0")
+    implementation("androidx.health.connect:connect-client:1.2.0-alpha04")
     implementation("androidx.room:room-runtime:2.8.1")
     implementation("androidx.room:room-ktx:2.8.1")
     kapt("androidx.room:room-compiler:2.8.1")
