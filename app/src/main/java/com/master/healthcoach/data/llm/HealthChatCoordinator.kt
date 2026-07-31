@@ -35,12 +35,13 @@ class HealthChatCoordinator(
             toolExecutor = tools::execute,
         )
         repository.addMessage("assistant", answer)
-        compactMemoryIfNeeded(apiKey)
+        refreshHabitMemory(apiKey, force = false)
         return answer
     }
 
     suspend fun analyzeLatestWeek(): AdviceResponse {
         val apiKey = apiKeyStore.load() ?: error("設定画面でGemini APIキーを保存してください")
+        refreshHabitMemory(apiKey, force = true)
         val report = repository.getLatestWeekly() ?: repository.rebuildWeekly()
         val snapshot = json.decodeFromString<WeeklySnapshot>(report.snapshotJson)
         val goal = repository.getGoal()
@@ -48,6 +49,8 @@ class HealthChatCoordinator(
             appendLine("次の週次健康サマリを分析してください。")
             appendLine(json.encodeToString(WeeklySnapshot.serializer(), snapshot))
             appendLine("目標: $goal")
+            appendLine("会話から確認済みの習慣: ${repository.getMemory()?.summary.orEmpty()}")
+            appendLine("習慣と数値の関連は、根拠がある範囲だけhabitInsightsへ最大3件示してください。")
         }
         val raw = gemini.generateStructuredAdvice(
             apiKey = apiKey,
@@ -58,18 +61,18 @@ class HealthChatCoordinator(
         return json.decodeFromString(raw)
     }
 
-    private suspend fun compactMemoryIfNeeded(apiKey: String) {
-        val count = repository.messageCount()
-        if (count < MEMORY_COMPACTION_THRESHOLD || count % MEMORY_COMPACTION_INTERVAL != 0) return
-        val recent = repository.getRecentMessages(MEMORY_COMPACTION_INTERVAL).map {
-            GeminiTurn(it.role, it.content)
-        }
-        val latestId = repository.getRecentMessages(1).lastOrNull()?.id ?: return
+    private suspend fun refreshHabitMemory(apiKey: String, force: Boolean) {
+        val memory = repository.getMemory()
+        val unsummarized = repository.getMessagesAfter(memory?.summarizedThroughMessageId ?: 0)
+        val userMessages = unsummarized.filter { it.role == "user" }
+        if (userMessages.isEmpty()) return
+        if (!force && userMessages.size < HABIT_REFRESH_USER_MESSAGES) return
+        val latestId = unsummarized.maxOf { it.id }
         val summary = gemini.summarizeConversation(
             apiKey = apiKey,
             model = apiKeyStore.modelId(),
-            currentMemory = repository.getMemory()?.summary,
-            messages = recent,
+            currentMemory = memory?.summary,
+            messages = userMessages.map { GeminiTurn(it.role, it.content) },
         )
         repository.saveMemory(summary, latestId)
     }
@@ -82,18 +85,18 @@ class HealthChatCoordinator(
         医療診断、疾病の推測、服薬指示、極端な食事制限は行いません。
         食事記録はないため一般的な食事改善だけ提案でき、摂取カロリーや赤字量を断定しません。
         データ不足時は限界を明示し、行動案は最大3つに絞ります。
+        会話メモリーは利用者が話した確認済みの習慣・制約です。数値との因果関係を
+        推測せず、関連を述べる場合は観測事実と仮説を分けてください。
 
         利用者プロフィール:
         ${profile.orEmpty()}
 
-        長期会話メモリー:
+        確認済みの習慣・生活上の制約:
         ${memory.orEmpty()}
     """.trimIndent()
 
     companion object {
         private const val CONTEXT_MESSAGE_LIMIT = 20
-        private const val MEMORY_COMPACTION_THRESHOLD = 24
-        private const val MEMORY_COMPACTION_INTERVAL = 20
+        private const val HABIT_REFRESH_USER_MESSAGES = 6
     }
 }
-

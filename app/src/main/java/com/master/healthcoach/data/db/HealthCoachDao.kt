@@ -33,10 +33,10 @@ interface HealthCoachDao {
     suspend fun upsertMemory(memory: ConversationMemoryEntity)
 
     @Query("SELECT * FROM daily_health_summary ORDER BY date DESC LIMIT :limit")
-    fun observeDaily(limit: Int = 28): Flow<List<DailyHealthSummaryEntity>>
+    fun observeDaily(limit: Int = 365): Flow<List<DailyHealthSummaryEntity>>
 
     @Query("SELECT * FROM body_composition_daily ORDER BY date DESC LIMIT :limit")
-    fun observeBody(limit: Int = 28): Flow<List<BodyCompositionEntity>>
+    fun observeBody(limit: Int = 365): Flow<List<BodyCompositionEntity>>
 
     @Query("SELECT * FROM health_source_status ORDER BY recordType")
     fun observeSources(): Flow<List<HealthSourceStatusEntity>>
@@ -70,6 +70,9 @@ interface HealthCoachDao {
 
     @Query("SELECT * FROM chat_messages ORDER BY id DESC LIMIT :limit")
     suspend fun getRecentMessages(limit: Int): List<ChatMessageEntity>
+
+    @Query("SELECT * FROM chat_messages WHERE id > :afterId ORDER BY id")
+    suspend fun getMessagesAfter(afterId: Long): List<ChatMessageEntity>
 
     @Query("SELECT COUNT(*) FROM chat_messages")
     suspend fun messageCount(): Int

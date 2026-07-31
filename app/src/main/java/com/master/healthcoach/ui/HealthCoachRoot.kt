@@ -2,6 +2,7 @@ package com.master.healthcoach.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,12 +18,16 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -40,6 +45,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,19 +65,22 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.master.healthcoach.data.db.BodyCompositionEntity
 import com.master.healthcoach.data.db.DailyHealthSummaryEntity
@@ -82,8 +91,12 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
+import kotlin.math.ceil
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+import kotlinx.coroutines.launch
 
 private enum class AppTab(val label: String, val icon: ImageVector) {
     TODAY("今日", Icons.Default.Home),
@@ -170,6 +183,7 @@ fun HealthCoachRoot(
                         onSaveGoal = onSaveGoal,
                         onSaveApiKey = onSaveApiKey,
                         onClearApiKey = onClearApiKey,
+                        onRequestPermissions = onRequestPermissions,
                         onOpenHealthConnect = onOpenHealthConnect,
                         onClearLocalData = onClearLocalData,
                     )
@@ -236,6 +250,11 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
     val steps = lastSeven.mapNotNull { it.steps }.averageOrNull()?.roundToLong()
     val calories = lastSeven.mapNotNull { it.activeCaloriesKcal }.averageOrNull()
     val sessions = lastSeven.sumOf { it.exerciseSessionCount }
+    val sleepMinutes = lastSeven.mapNotNull { it.sleepMinutes }.averageOrNull()?.roundToLong()
+    val heartRate = lastSeven.mapNotNull {
+        it.heartRateAverageBpm
+    }.averageOrNull()?.roundToLong()
+    val basalCalories = lastSeven.mapNotNull { it.basalCaloriesKcal }.averageOrNull()
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -260,6 +279,30 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                     Modifier.weight(1f),
                 )
             }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetricCard(
+                    "睡眠",
+                    sleepMinutes?.asHoursMinutes() ?: "未取得",
+                    "直近7日の1日平均",
+                    Modifier.weight(1f),
+                )
+                MetricCard(
+                    "平均心拍",
+                    heartRate?.let { "$it bpm" } ?: "未取得",
+                    "直近7日",
+                    Modifier.weight(1f),
+                )
+            }
+        }
+        item {
+            MetricCard(
+                "基礎代謝",
+                basalCalories?.let { "${it.roundToLong()} kcal/日" } ?: "未取得",
+                "Health Connectの直近7日平均",
+                Modifier.fillMaxWidth(),
+            )
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -308,48 +351,221 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
 
 @Composable
 private fun TrendsScreen(state: MainUiState) {
-    val body = state.body.take(28).reversed()
-    val daily = state.daily.take(28).reversed()
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 28.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item { SectionHeader("28日トレンド", "欠損日は線から除外しています") }
-        item { TrendCard("脂肪量", "kg", body.mapNotNull { it.fatMassKg }) }
-        item { TrendCard("除脂肪量", "kg", body.mapNotNull { it.leanBodyMassKg }) }
-        item { TrendCard("歩数", "歩", daily.mapNotNull { it.steps?.toDouble() }) }
-        item { TrendCard("活動消費", "kcal", daily.mapNotNull { it.activeCaloriesKcal }) }
-        item { SectionHeader("最近の運動", "Health Connectの運動セッション") }
-        if (state.exerciseSessions.isEmpty()) {
-            item { EmptyCard("運動セッションは未取得です", "Mi FitnessのHealth Connect共有設定を確認してください") }
-        } else {
-            items(state.exerciseSessions.take(12), key = { it.recordId }) { session ->
-                Card {
-                    Row(
-                        Modifier.fillMaxWidth().padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column {
-                            Text(session.exerciseLabel, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                formatInstant(session.startEpochMillis),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Text("${session.durationMinutes}分")
-                    }
+    var rangeDays by rememberSaveable { mutableStateOf(7) }
+    val today = LocalDate.now()
+    val oldest = (state.daily.map { LocalDate.parse(it.date) } +
+        state.body.map { LocalDate.parse(it.date) }).minOrNull()
+    val availableDays = oldest?.let {
+        ChronoUnit.DAYS.between(it, today).toInt() + 1
+    } ?: 1
+    val pageCount = ceil(availableDays.toDouble() / rangeDays).toInt().coerceAtLeast(1)
+    val pagerState = rememberPagerState(initialPage = 0) { pageCount }
+    val pagerScope = rememberCoroutineScope()
+    LaunchedEffect(rangeDays) {
+        pagerState.scrollToPage(0)
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SectionHeader("期間別トレンド", "左右にスワイプして期間を移動・グラフをタップして値を確認")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(7 to "7日", 28 to "28日").forEach { (days, label) ->
+                    FilterChip(
+                        selected = rangeDays == days,
+                        onClick = { rangeDays = days },
+                        label = { Text(label) },
+                    )
                 }
             }
         }
-        item {
-            Text(
-                "除脂肪量は筋肉量そのものではなく、水分・骨などを含む筋肉維持の参考指標です。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        ) { page ->
+            val end = today.minusDays((page * rangeDays).toLong())
+            val start = end.minusDays((rangeDays - 1).toLong())
+            val bodyByDate = state.body.associateBy { it.date }
+            val dailyByDate = state.daily.associateBy { it.date }
+            val dates = (0 until rangeDays).map { start.plusDays(it.toLong()) }
+            val sessions = state.exerciseSessions.filter {
+                val date = Instant.ofEpochMilli(it.startEpochMillis)
+                    .atZone(ZoneId.systemDefault()).toLocalDate()
+                date in start..end
+            }
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp, 4.dp, 16.dp, 28.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(
+                            onClick = {
+                                if (page > 0) {
+                                    pagerScope.launch {
+                                        pagerState.animateScrollToPage(page - 1)
+                                    }
+                                }
+                            },
+                            enabled = page > 0,
+                        ) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "新しい期間")
+                        }
+                        Text(
+                            "${start.format(TREND_DATE_FORMAT)} 〜 " +
+                                end.format(TREND_DATE_FORMAT),
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        IconButton(
+                            onClick = {
+                                if (page < pageCount - 1) {
+                                    pagerScope.launch {
+                                        pagerState.animateScrollToPage(page + 1)
+                                    }
+                                }
+                            },
+                            enabled = page < pageCount - 1,
+                        ) {
+                            Icon(Icons.Default.ArrowForward, contentDescription = "古い期間")
+                        }
+                    }
+                }
+                item {
+                    TrendCard(
+                        "脂肪量",
+                        "kg",
+                        dates.map { date ->
+                            TrendPoint(date, bodyByDate[date.toString()]?.fatMassKg)
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        "除脂肪量（計算値）",
+                        "kg",
+                        dates.map { date ->
+                            TrendPoint(date, bodyByDate[date.toString()]?.leanBodyMassKg)
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        "歩数",
+                        "歩",
+                        dates.map { date ->
+                            TrendPoint(date, dailyByDate[date.toString()]?.steps?.toDouble())
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        "活動消費",
+                        "kcal",
+                        dates.map { date ->
+                            TrendPoint(date, dailyByDate[date.toString()]?.activeCaloriesKcal)
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        "睡眠時間",
+                        "分",
+                        dates.map { date ->
+                            TrendPoint(date, dailyByDate[date.toString()]?.sleepMinutes?.toDouble())
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        "平均心拍数",
+                        "bpm",
+                        dates.map { date ->
+                            val item = dailyByDate[date.toString()]
+                            TrendPoint(
+                                date = date,
+                                value = item?.heartRateAverageBpm?.toDouble(),
+                                details = listOfNotNull(
+                                    item?.heartRateMinimumBpm?.let { "最小 $it bpm" },
+                                    item?.heartRateMaximumBpm?.let { "最大 $it bpm" },
+                                ),
+                            )
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        "中強度アクティビティ",
+                        "分",
+                        dates.map { date ->
+                            TrendPoint(
+                                date,
+                                dailyByDate[date.toString()]?.moderateIntensityMinutes?.toDouble(),
+                            )
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        "高強度アクティビティ",
+                        "分",
+                        dates.map { date ->
+                            TrendPoint(
+                                date,
+                                dailyByDate[date.toString()]?.vigorousIntensityMinutes?.toDouble(),
+                            )
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        "基礎代謝",
+                        "kcal/日",
+                        dates.map { date ->
+                            TrendPoint(date, dailyByDate[date.toString()]?.basalCaloriesKcal)
+                        },
+                    )
+                }
+                item { SectionHeader("期間内の運動", "Health Connectの運動セッション") }
+                if (sessions.isEmpty()) {
+                    item { EmptyCard("この期間の運動セッションはありません", "記録がある期間へスワイプしてください") }
+                } else {
+                    items(sessions, key = { it.recordId }) { session ->
+                        Card {
+                            Row(
+                                Modifier.fillMaxWidth().padding(14.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column {
+                                    Text(session.exerciseLabel, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        formatInstant(session.startEpochMillis),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Text("${session.durationMinutes}分")
+                            }
+                        }
+                    }
+                }
+                item {
+                    Text(
+                        "除脂肪量は体重と体脂肪率から計算し、水分・骨なども含みます。" +
+                            "筋肉維持の参考指標として扱ってください。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }
@@ -377,6 +593,19 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         Text("平均歩数 ${report.stepsDailyAverage?.let { "%,d".format(it) } ?: "未取得"}")
                         Text("平均活動消費 ${report.activeCaloriesDailyAverage?.roundToLong() ?: "未取得"} kcal")
                         Text("運動 ${report.exerciseSessions}回・${report.exerciseMinutes}分")
+                        Text(
+                            "睡眠 ${report.sleepDailyAverageMinutes?.asHoursMinutes() ?: "未取得"} / 日",
+                        )
+                        Text(
+                            "強度 中${report.moderateIntensityMinutes ?: "未取得"}分・" +
+                                "高${report.vigorousIntensityMinutes ?: "未取得"}分",
+                        )
+                        Text(
+                            "平均心拍 ${report.heartRateAverageBpm?.let { "$it bpm" } ?: "未取得"}",
+                        )
+                        Text(
+                            "基礎代謝 ${report.basalCaloriesDailyAverage?.roundToLong() ?: "未取得"} kcal/日",
+                        )
                     }
                 }
             }
@@ -411,6 +640,10 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         Text(advice.summary, style = MaterialTheme.typography.bodyLarge)
                         advice.positiveChange?.let { AdviceBlock("よかった変化", it) }
                         advice.caution?.let { AdviceBlock("注意点", it) }
+                        if (advice.habitInsights.isNotEmpty()) {
+                            Text("習慣との関連", fontWeight = FontWeight.SemiBold)
+                            advice.habitInsights.forEach { Text("・$it") }
+                        }
                         if (advice.nextActions.isNotEmpty()) {
                             Text("次の一手", fontWeight = FontWeight.SemiBold)
                             advice.nextActions.forEachIndexed { index, action ->
@@ -512,6 +745,7 @@ private fun SettingsScreen(
     onSaveGoal: (GoalEntity) -> Unit,
     onSaveApiKey: (String, String) -> Unit,
     onClearApiKey: () -> Unit,
+    onRequestPermissions: () -> Unit,
     onOpenHealthConnect: () -> Unit,
     onClearLocalData: () -> Unit,
 ) {
@@ -608,16 +842,27 @@ private fun SettingsScreen(
                         source.latestRecordEpochMillis?.let {
                             Text("最新 ${formatInstant(it)}", style = MaterialTheme.typography.labelSmall)
                         }
+                        Text(source.status, style = MaterialTheme.typography.labelSmall)
                     }
+                    val healthy = source.status == "取得可能" || source.status == "計算可能"
                     Icon(
-                        if (source.status == "取得可能") Icons.Default.CheckCircle else Icons.Default.Warning,
+                        if (healthy) Icons.Default.CheckCircle else Icons.Default.Warning,
                         null,
-                        tint = if (source.status == "取得可能") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        tint = if (healthy) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
                     )
                 }
             }
         }
         if (state.sources.isEmpty()) Text("同期後に診断結果が表示されます。")
+        if (!state.grantedPermissions.containsAll(state.requiredPermissions)) {
+            Button(onClick = onRequestPermissions, modifier = Modifier.fillMaxWidth()) {
+                Text("睡眠・心拍・基礎代謝などの権限を許可")
+            }
+        }
         OutlinedButton(onClick = onOpenHealthConnect, modifier = Modifier.fillMaxWidth()) {
             Text("Health Connectの権限を管理")
         }
@@ -694,24 +939,73 @@ private fun DailyRow(day: DailyHealthSummaryEntity) {
     }
 }
 
+private data class TrendPoint(
+    val date: LocalDate,
+    val value: Double?,
+    val details: List<String> = emptyList(),
+)
+
 @Composable
-private fun TrendCard(title: String, unit: String, values: List<Double>) {
+private fun TrendCard(title: String, unit: String, points: List<TrendPoint>) {
+    var selectedIndex by remember(points) { mutableStateOf<Int?>(null) }
+    val measured = points.mapNotNull { it.value }
+    val selected = selectedIndex?.let { points.getOrNull(it) }
     Card {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(title, fontWeight = FontWeight.SemiBold)
-                Text(values.lastOrNull()?.let { "${DecimalFormat("0.#").format(it)} $unit" } ?: "未取得")
+                Text(
+                    measured.lastOrNull()?.let {
+                        "${DecimalFormat("0.#").format(it)} $unit"
+                    } ?: "未取得",
+                )
             }
             Spacer(Modifier.height(12.dp))
-            if (values.size < 2) {
+            if (measured.size < 2) {
                 Box(Modifier.fillMaxWidth().height(92.dp), contentAlignment = Alignment.Center) {
                     Text("表示に十分なデータがありません", style = MaterialTheme.typography.bodySmall)
                 }
             } else {
-                Sparkline(values, Modifier.fillMaxWidth().height(92.dp))
+                InteractiveSparkline(
+                    points = points,
+                    selectedIndex = selectedIndex,
+                    onSelect = { selectedIndex = it },
+                    modifier = Modifier.fillMaxWidth().height(108.dp),
+                )
+                selected?.let { point ->
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .background(
+                                MaterialTheme.colorScheme.surfaceVariant,
+                                RoundedCornerShape(10.dp),
+                            )
+                            .padding(10.dp),
+                    ) {
+                        Text(
+                            point.date.format(TREND_DETAIL_DATE_FORMAT),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        Text(
+                            point.value?.let {
+                                "${DecimalFormat("0.#").format(it)} $unit"
+                            } ?: "未取得",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        point.details.forEach {
+                            Text(it, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("${values.size}測定", style = MaterialTheme.typography.labelSmall)
-                    Text("変化 ${signed(values.last() - values.first())} $unit", style = MaterialTheme.typography.labelSmall)
+                    Text(
+                        "${measured.size}測定・タップで詳細",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                    Text(
+                        "変化 ${signed(measured.last() - measured.first())} $unit",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
                 }
             }
         }
@@ -719,22 +1013,85 @@ private fun TrendCard(title: String, unit: String, values: List<Double>) {
 }
 
 @Composable
-private fun Sparkline(values: List<Double>, modifier: Modifier = Modifier) {
+private fun InteractiveSparkline(
+    points: List<TrendPoint>,
+    selectedIndex: Int?,
+    onSelect: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val color = MaterialTheme.colorScheme.primary
-    Canvas(modifier) {
+    val selectionColor = MaterialTheme.colorScheme.tertiary
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    Canvas(
+        modifier
+            .onSizeChanged { canvasSize = it }
+            .pointerInput(points, canvasSize) {
+                detectTapGestures { offset ->
+                    if (points.isNotEmpty() && canvasSize.width > 0) {
+                        val fraction = (offset.x / canvasSize.width).coerceIn(0f, 1f)
+                        onSelect((fraction * (points.size - 1)).roundToInt())
+                    }
+                }
+            },
+    ) {
+        val values = points.mapNotNull { it.value }
         val min = values.minOrNull() ?: return@Canvas
         val max = values.maxOrNull() ?: return@Canvas
         val span = (max - min).takeIf { it > 0.0001 } ?: 1.0
-        val stepX = size.width / (values.size - 1)
-        val path = Path()
-        values.forEachIndexed { index, value ->
-            val point = Offset(
+        val stepX = if (points.size > 1) size.width / (points.size - 1) else 0f
+        var path = Path()
+        var pathPointCount = 0
+
+        fun drawCurrentPath() {
+            if (pathPointCount >= 2) {
+                drawPath(
+                    path,
+                    color,
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 4f,
+                        cap = StrokeCap.Round,
+                    ),
+                )
+            }
+            path = Path()
+            pathPointCount = 0
+        }
+
+        points.forEachIndexed { index, trendPoint ->
+            val value = trendPoint.value
+            if (value == null) {
+                drawCurrentPath()
+                return@forEachIndexed
+            }
+            val chartPoint = Offset(
                 x = stepX * index,
                 y = size.height - (((value - min) / span).toFloat() * size.height * 0.82f) - size.height * 0.09f,
             )
-            if (index == 0) path.moveTo(point.x, point.y) else path.lineTo(point.x, point.y)
+            if (pathPointCount == 0) {
+                path.moveTo(chartPoint.x, chartPoint.y)
+            } else {
+                path.lineTo(chartPoint.x, chartPoint.y)
+            }
+            pathPointCount++
+            drawCircle(color = color, radius = 4f, center = chartPoint)
         }
-        drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f, cap = StrokeCap.Round))
+        drawCurrentPath()
+
+        selectedIndex?.takeIf { it in points.indices }?.let { index ->
+            val x = stepX * index
+            drawLine(
+                color = selectionColor,
+                start = Offset(x, 0f),
+                end = Offset(x, size.height),
+                strokeWidth = 2f,
+            )
+            points[index].value?.let { value ->
+                val y = size.height -
+                    (((value - min) / span).toFloat() * size.height * 0.82f) -
+                    size.height * 0.09f
+                drawCircle(color = selectionColor, radius = 8f, center = Offset(x, y))
+            }
+        }
     }
 }
 
@@ -795,6 +1152,10 @@ private fun SmallField(
 private fun List<Number>.averageOrNull(): Double? =
     if (isEmpty()) null else sumOf { it.toDouble() } / size
 
+private val TREND_DATE_FORMAT = DateTimeFormatter.ofPattern("M/d")
+private val TREND_DETAIL_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy/M/d (E)", Locale.JAPAN)
+
+private fun Long.asHoursMinutes(): String = "${this / 60}時間${this % 60}分"
 private fun Double?.kg(): String = this?.let { "${DecimalFormat("0.0").format(it)} kg" } ?: "未取得"
 private fun Double?.clean(): String? = this?.let { DecimalFormat("0.##").format(it) }
 private fun signed(value: Double): String = if (value >= 0) "+${DecimalFormat("0.##").format(value)}" else DecimalFormat("0.##").format(value)

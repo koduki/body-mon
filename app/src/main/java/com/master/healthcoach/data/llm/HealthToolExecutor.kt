@@ -17,6 +17,10 @@ class HealthToolExecutor(private val repository: HealthRepository) {
         "get_body_composition" -> body(call)
         "get_activity_summary" -> activity(call)
         "get_exercise_summary" -> exercise(call)
+        "get_sleep_summary" -> sleep(call)
+        "get_heart_rate_summary" -> heartRate(call)
+        "get_activity_intensity_summary" -> intensity(call)
+        "get_metabolism_summary" -> metabolism(call)
         "get_goal_progress" -> goals()
         else -> buildJsonObject { put("error", "未対応の関数: ${call.name}") }
     }
@@ -111,6 +115,112 @@ class HealthToolExecutor(private val repository: HealthRepository) {
         }
     }
 
+    private suspend fun sleep(call: GeminiFunctionCall): JsonElement {
+        val (from, to) = range(call)
+        val items = repository.getDaily(from, to)
+        val measured = items.filter { it.sleepMinutes != null }
+        return buildJsonObject {
+            put("from", from.toString())
+            put("to", to.toString())
+            put("measurementDays", measured.size)
+            number("sleepDailyAverageMinutes", measured.mapNotNull {
+                it.sleepMinutes
+            }.averageOrNull())
+            put("daily", buildJsonArray {
+                measured.forEach { item ->
+                    add(buildJsonObject {
+                        put("date", item.date)
+                        item.sleepMinutes?.let { put("sleepMinutes", it) }
+                    })
+                }
+            })
+        }
+    }
+
+    private suspend fun heartRate(call: GeminiFunctionCall): JsonElement {
+        val (from, to) = range(call)
+        val items = repository.getDaily(from, to)
+        val measured = items.filter { it.heartRateAverageBpm != null }
+        return buildJsonObject {
+            put("from", from.toString())
+            put("to", to.toString())
+            put("measurementDays", measured.size)
+            number("averageBpm", measured.mapNotNull {
+                it.heartRateAverageBpm
+            }.averageOrNull())
+            measured.mapNotNull { it.heartRateMinimumBpm }.minOrNull()?.let {
+                put("minimumBpm", it)
+            }
+            measured.mapNotNull { it.heartRateMaximumBpm }.maxOrNull()?.let {
+                put("maximumBpm", it)
+            }
+            put("measurementCount", measured.sumOf {
+                it.heartRateMeasurementCount ?: 0
+            })
+            put("daily", buildJsonArray {
+                measured.forEach { item ->
+                    add(buildJsonObject {
+                        put("date", item.date)
+                        item.heartRateAverageBpm?.let { put("averageBpm", it) }
+                        item.heartRateMinimumBpm?.let { put("minimumBpm", it) }
+                        item.heartRateMaximumBpm?.let { put("maximumBpm", it) }
+                    })
+                }
+            })
+        }
+    }
+
+    private suspend fun intensity(call: GeminiFunctionCall): JsonElement {
+        val (from, to) = range(call)
+        val items = repository.getDaily(from, to)
+        return buildJsonObject {
+            put("from", from.toString())
+            put("to", to.toString())
+            number(
+                "moderateIntensityMinutes",
+                items.mapNotNull { it.moderateIntensityMinutes }.sumOrNull(),
+            )
+            number(
+                "vigorousIntensityMinutes",
+                items.mapNotNull { it.vigorousIntensityMinutes }.sumOrNull(),
+            )
+            put("daily", buildJsonArray {
+                items.filter {
+                    it.moderateIntensityMinutes != null ||
+                        it.vigorousIntensityMinutes != null
+                }.forEach { item ->
+                    add(buildJsonObject {
+                        put("date", item.date)
+                        item.moderateIntensityMinutes?.let { put("moderateMinutes", it) }
+                        item.vigorousIntensityMinutes?.let { put("vigorousMinutes", it) }
+                    })
+                }
+            })
+        }
+    }
+
+    private suspend fun metabolism(call: GeminiFunctionCall): JsonElement {
+        val (from, to) = range(call)
+        val items = repository.getDaily(from, to)
+        val measured = items.filter { it.basalCaloriesKcal != null }
+        return buildJsonObject {
+            put("from", from.toString())
+            put("to", to.toString())
+            put("measurementDays", measured.size)
+            number("basalCaloriesDailyAverage", measured.mapNotNull {
+                it.basalCaloriesKcal
+            }.averageOrNull())
+            put("daily", buildJsonArray {
+                measured.forEach { item ->
+                    add(buildJsonObject {
+                        put("date", item.date)
+                        number("basalCaloriesKcal", item.basalCaloriesKcal)
+                    })
+                }
+            })
+        }
+    }
+
     private suspend fun goals(): JsonElement {
         val goal = repository.getGoal()
             ?: return buildJsonObject { put("status", "目標未設定") }
@@ -136,6 +246,8 @@ class HealthToolExecutor(private val repository: HealthRepository) {
 
     private fun List<Number>.averageOrNull(): Double? =
         if (isEmpty()) null else sumOf { it.toDouble() } / size
+
+    private fun List<Long>.sumOrNull(): Long? = if (isEmpty()) null else sum()
 
     private fun kotlinx.serialization.json.JsonObjectBuilder.number(name: String, value: Number?) {
         if (value == null || value.toDouble().isNaN()) put(name, JsonNull)

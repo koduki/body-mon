@@ -6,24 +6,10 @@ import org.junit.Test
 
 class BodyCompositionCalculatorTest {
     @Test
-    fun `uses direct lean mass when available near weight measurement`() {
+    fun `always calculates lean mass from weight and body fat`() {
         val result = BodyCompositionCalculator.calculate(
             weights = listOf(TimedMeasurement(1_000_000, 80.0, "eufy")),
             bodyFatPercentages = listOf(TimedMeasurement(1_030_000, 25.0, "eufy")),
-            leanMasses = listOf(TimedMeasurement(1_040_000, 61.0, "eufy")),
-        )
-
-        assertEquals(20.0, result.fatMassKg!!, 0.001)
-        assertEquals(61.0, result.leanMassKg!!, 0.001)
-        assertEquals("health_connect", result.leanMassSource)
-    }
-
-    @Test
-    fun `calculates lean mass when direct record is missing`() {
-        val result = BodyCompositionCalculator.calculate(
-            weights = listOf(TimedMeasurement(1_000_000, 80.0, "eufy")),
-            bodyFatPercentages = listOf(TimedMeasurement(1_000_000, 25.0, "eufy")),
-            leanMasses = emptyList(),
         )
 
         assertEquals(20.0, result.fatMassKg!!, 0.001)
@@ -36,7 +22,6 @@ class BodyCompositionCalculatorTest {
         val result = BodyCompositionCalculator.calculate(
             weights = listOf(TimedMeasurement(1_000_000, 80.0, "eufy")),
             bodyFatPercentages = listOf(TimedMeasurement(2_000_000, 25.0, "eufy")),
-            leanMasses = emptyList(),
         )
 
         assertNull(result.bodyFatPercent)
@@ -49,7 +34,6 @@ class BodyCompositionCalculatorTest {
         val result = BodyCompositionCalculator.calculate(
             weights = listOf(TimedMeasurement(1_000_000, 80.0, "eufy")),
             bodyFatPercentages = listOf(TimedMeasurement(1_000_000, 125.0, "eufy")),
-            leanMasses = emptyList(),
         )
 
         assertNull(result.bodyFatPercent)

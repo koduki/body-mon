@@ -22,6 +22,14 @@ class WeeklyReportBuilderTest {
                 strengthMinutes = if (offset % 3L == 0L) 30 else 0,
                 cardioMinutes = 0,
                 exerciseSessionCount = if (offset % 3L == 0L) 1 else 0,
+                sleepMinutes = 420,
+                moderateIntensityMinutes = 20,
+                vigorousIntensityMinutes = 5,
+                heartRateAverageBpm = 72,
+                heartRateMinimumBpm = 48,
+                heartRateMaximumBpm = 135,
+                heartRateMeasurementCount = 100,
+                basalCaloriesKcal = 1_650.0,
                 dataOrigins = "mi fitness",
                 updatedAtEpochMillis = 0,
             )
@@ -38,6 +46,11 @@ class WeeklyReportBuilderTest {
         assertEquals(0.0, report.leanMassChangeKg!!, 0.001)
         assertEquals(8_000, report.stepsDailyAverage)
         assertEquals(6_000, report.previousWeekStepsDailyAverage)
+        assertEquals(420L, report.sleepDailyAverageMinutes)
+        assertEquals(140L, report.moderateIntensityMinutes)
+        assertEquals(35L, report.vigorousIntensityMinutes)
+        assertEquals(72L, report.heartRateAverageBpm)
+        assertEquals(1_650.0, report.basalCaloriesDailyAverage!!, 0.001)
         assertTrue(report.dataLimitations.isEmpty())
     }
 
@@ -56,9 +69,8 @@ class WeeklyReportBuilderTest {
             bodyFatPercent = fat / weight * 100,
             fatMassKg = fat,
             leanBodyMassKg = lean,
-            leanMassSource = "health_connect",
+            leanMassSource = "calculated",
             measurementEpochMillis = 0,
             dataOrigin = "eufy",
         )
 }
-

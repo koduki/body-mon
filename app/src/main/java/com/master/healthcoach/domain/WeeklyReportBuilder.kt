@@ -26,6 +26,22 @@ object WeeklyReportBuilder {
             if (currentDaily.count { it.activeCaloriesKcal != null } < 5) {
                 add("活動消費カロリーが5日未満です")
             }
+            if (currentDaily.count { it.sleepMinutes != null } < 5) {
+                add("睡眠時間が5日未満です")
+            }
+            if (currentDaily.count { it.heartRateAverageBpm != null } < 5) {
+                add("心拍数が5日未満です")
+            }
+            if (currentDaily.count { it.basalCaloriesKcal != null } < 5) {
+                add("基礎代謝が5日未満です")
+            }
+            if (currentDaily.none {
+                    it.moderateIntensityMinutes != null ||
+                        it.vigorousIntensityMinutes != null
+                }
+            ) {
+                add("アクティビティ強度を取得できていません")
+            }
         }
 
         return WeeklySnapshot(
@@ -48,6 +64,49 @@ object WeeklyReportBuilder {
                 previousDaily.mapNotNull { it.activeCaloriesKcal },
             ),
             dataLimitations = limitations,
+            sleepDailyAverageMinutes = averageLong(
+                currentDaily.mapNotNull { it.sleepMinutes },
+            ),
+            sleepMeasurementDays = currentDaily.count { it.sleepMinutes != null },
+            moderateIntensityMinutes = sumLongOrNull(
+                currentDaily.mapNotNull { it.moderateIntensityMinutes },
+            ),
+            vigorousIntensityMinutes = sumLongOrNull(
+                currentDaily.mapNotNull { it.vigorousIntensityMinutes },
+            ),
+            heartRateAverageBpm = averageLong(
+                currentDaily.mapNotNull { it.heartRateAverageBpm },
+            ),
+            heartRateMinimumBpm = currentDaily.mapNotNull {
+                it.heartRateMinimumBpm
+            }.minOrNull(),
+            heartRateMaximumBpm = currentDaily.mapNotNull {
+                it.heartRateMaximumBpm
+            }.maxOrNull(),
+            heartRateMeasurementDays = currentDaily.count {
+                it.heartRateAverageBpm != null
+            },
+            basalCaloriesDailyAverage = averageDouble(
+                currentDaily.mapNotNull { it.basalCaloriesKcal },
+            ),
+            basalCaloriesMeasurementDays = currentDaily.count {
+                it.basalCaloriesKcal != null
+            },
+            previousWeekSleepDailyAverageMinutes = averageLong(
+                previousDaily.mapNotNull { it.sleepMinutes },
+            ),
+            previousWeekModerateIntensityMinutes = sumLongOrNull(
+                previousDaily.mapNotNull { it.moderateIntensityMinutes },
+            ),
+            previousWeekVigorousIntensityMinutes = sumLongOrNull(
+                previousDaily.mapNotNull { it.vigorousIntensityMinutes },
+            ),
+            previousWeekHeartRateAverageBpm = averageLong(
+                previousDaily.mapNotNull { it.heartRateAverageBpm },
+            ),
+            previousWeekBasalCaloriesDailyAverage = averageDouble(
+                previousDaily.mapNotNull { it.basalCaloriesKcal },
+            ),
         )
     }
 
@@ -59,5 +118,7 @@ object WeeklyReportBuilder {
 
     private fun averageDouble(values: List<Double>): Double? =
         if (values.isEmpty()) null else values.average()
-}
 
+    private fun sumLongOrNull(values: List<Long>): Long? =
+        if (values.isEmpty()) null else values.sum()
+}

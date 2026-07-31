@@ -33,6 +33,7 @@ data class MainUiState(
     val availability: HealthConnectAvailability = HealthConnectAvailability.UNAVAILABLE,
     val grantedPermissions: Set<String> = emptySet(),
     val requiredPermissions: Set<String> = emptySet(),
+    val corePermissions: Set<String> = emptySet(),
     val isSyncing: Boolean = false,
     val isSending: Boolean = false,
     val apiKeyConfigured: Boolean = false,
@@ -41,8 +42,7 @@ data class MainUiState(
     val message: String? = null,
 ) {
     val hasCorePermissions: Boolean
-        get() = requiredPermissions.filterNot { it.contains("IN_BACKGROUND") }
-            .all { it in grantedPermissions }
+        get() = corePermissions.all { it in grantedPermissions }
 }
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,6 +52,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         MainUiState(
             availability = repository.availability(),
             requiredPermissions = repository.requestedPermissions(),
+            corePermissions = repository.corePermissions(),
             apiKeyConfigured = container.apiKeyStore.hasKey(),
             modelId = container.apiKeyStore.modelId(),
         ),

@@ -8,7 +8,6 @@ object BodyCompositionCalculator {
     fun calculate(
         weights: List<TimedMeasurement>,
         bodyFatPercentages: List<TimedMeasurement>,
-        leanMasses: List<TimedMeasurement>,
         maxDifferenceMillis: Long = DEFAULT_WINDOW_MILLIS,
     ): BodyCalculation {
         val weight = weights
@@ -22,22 +21,10 @@ object BodyCompositionCalculator {
                     abs(it.epochMillis - weight.epochMillis) <= maxDifferenceMillis
             }
             .minByOrNull { abs(it.epochMillis - weight.epochMillis) }
-        val lean = leanMasses
-            .filter {
-                it.value.isFinite() &&
-                    it.value > 0.0 &&
-                    abs(it.epochMillis - weight.epochMillis) <= maxDifferenceMillis
-            }
-            .minByOrNull { abs(it.epochMillis - weight.epochMillis) }
-
         val fatMass = bodyFat?.let { weight.value * it.value / 100.0 }
-        val leanMass = lean?.value ?: fatMass?.let { weight.value - it }
-        val source = when {
-            lean != null -> "health_connect"
-            leanMass != null -> "calculated"
-            else -> null
-        }
-        val origins = listOfNotNull(weight.origin, bodyFat?.origin, lean?.origin)
+        val leanMass = fatMass?.let { weight.value - it }
+        val source = if (leanMass != null) "calculated" else null
+        val origins = listOfNotNull(weight.origin, bodyFat?.origin)
             .distinct()
             .joinToString(", ")
 
