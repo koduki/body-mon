@@ -42,7 +42,7 @@ interface HealthCoachDao {
     fun observeSources(): Flow<List<HealthSourceStatusEntity>>
 
     @Query("SELECT * FROM exercise_sessions ORDER BY startEpochMillis DESC LIMIT :limit")
-    fun observeExerciseSessions(limit: Int = 50): Flow<List<ExerciseSessionEntity>>
+    fun observeExerciseSessions(limit: Int = 365): Flow<List<ExerciseSessionEntity>>
 
     @Query("SELECT * FROM exercise_sessions WHERE startEpochMillis BETWEEN :from AND :to ORDER BY startEpochMillis")
     suspend fun getExerciseSessions(from: Long, to: Long): List<ExerciseSessionEntity>
@@ -64,6 +64,15 @@ interface HealthCoachDao {
 
     @Query("SELECT * FROM body_composition_daily WHERE date BETWEEN :from AND :to ORDER BY date")
     suspend fun getBody(from: String, to: String): List<BodyCompositionEntity>
+
+    @Query("SELECT MIN(date) FROM daily_health_summary")
+    suspend fun earliestDailyDate(): String?
+
+    @Query(
+        "DELETE FROM exercise_sessions " +
+            "WHERE startEpochMillis >= :from AND startEpochMillis < :toExclusive",
+    )
+    suspend fun deleteExerciseSessionsInRange(from: Long, toExclusive: Long)
 
     @Query("SELECT * FROM chat_messages ORDER BY id")
     fun observeMessages(): Flow<List<ChatMessageEntity>>

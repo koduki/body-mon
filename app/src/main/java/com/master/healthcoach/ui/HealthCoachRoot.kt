@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -87,9 +86,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.master.healthcoach.data.db.BodyCompositionEntity
-import com.master.healthcoach.data.db.DailyHealthSummaryEntity
 import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.data.health.HealthConnectAvailability
+import com.master.healthcoach.domain.TrendMath
 import java.text.DecimalFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -219,7 +218,8 @@ private fun PermissionScreen(
         Text("端末内の健康データを接続", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(10.dp))
         Text(
-            "体組成・歩数・運動・活動消費をHealth Connectから読み取ります。" +
+            "体組成・歩数・運動・活動消費・睡眠・心拍・活動強度を" +
+                "Health Connectから読み取ります。" +
                 "生データはこの端末に留まり、Geminiには明示操作時に加工済みデータだけを送ります。",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -251,16 +251,8 @@ private fun PermissionScreen(
 private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
     val todayStr = LocalDate.now().toString()
     val todayDaily = state.daily.firstOrNull { it.date == todayStr }
-    val todayBody = state.body.firstOrNull { it.date == todayStr } ?: state.body.firstOrNull()
-
+    val report = state.weekly
     val lastSeven = state.daily.take(7)
-    val sessions = lastSeven.sumOf { it.exerciseSessionCount }
-
-    val steps = todayDaily?.steps
-    val calories = todayDaily?.activeCaloriesKcal
-    val sleepMinutes = todayDaily?.sleepMinutes
-    val heartRate = todayDaily?.heartRateAverageBpm
-    val basalCalories = todayDaily?.basalCaloriesKcal
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -268,102 +260,259 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            SectionHeader("今の状態", "本日の計測・活動データ（0時〜）")
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "体重",
-                    todayBody?.weightKg.kg(),
-                    "最新の計測",
-                    Modifier.weight(1f),
-                )
-                MetricCard(
-                    "脂肪量",
-                    todayBody?.fatMassKg.kg(),
-                    "目標 ${state.goal?.targetFatMassKg.kg()}",
-                    Modifier.weight(1f),
-                )
-                MetricCard(
-                    "除脂肪量",
-                    todayBody?.leanBodyMassKg.kg(),
-                    if (todayBody?.leanMassSource == "calculated") "推定値" else "筋肉維持の参考",
-                    Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "睡眠",
-                    sleepMinutes?.asHoursMinutes() ?: "0分",
-                    "本日の睡眠",
-                    Modifier.weight(1f),
-                )
-                MetricCard(
-                    "心拍",
-                    heartRate?.let { "$it bpm" } ?: "0 bpm",
-                    "本日の平均",
-                    Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            MetricCard(
-                "基礎代謝",
-                basalCalories?.let { "${it.roundToLong()} kcal" } ?: "0 kcal",
-                "本日の基礎代謝",
-                Modifier.fillMaxWidth(),
+            SectionHeader(
+                "ボディメイクKPI",
+                "筋力を守りながら脂肪を落とすため、単日値ではなく傾向を見ます",
             )
+        }
+        item {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                ),
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text("28日ベースの減量ペース", style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        report?.weightLossRatePercentPerWeek?.let {
+                            "${DecimalFormat("0.00").format(it)} % / 週"
+                        } ?: "判定保留",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        weightPaceGuidance(report?.weightLossRatePercentPerWeek),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    report?.fatMassToGoalKg?.takeIf { it > 0 }?.let { gap ->
+                        Text(
+                            "目標脂肪量まで ${DecimalFormat("0.0").format(gap)} kg" +
+                                (
+                                    report.requiredFatLossKgPerWeek?.let {
+                                        "・期限ペース ${DecimalFormat("0.00").format(it)} kg/週"
+                                    } ?: ""
+                                    ),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+                }
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetricCard(
+                    "体重中央値",
+                    report?.currentWeightMedianKg.kg(),
+                    "直近7日・前週比 ${(report?.weightChangeKg).signedOrMissing("kg")}",
+                    Modifier.weight(1f),
+                )
+                MetricCard(
+                    "脂肪量傾向",
+                    (report?.fatMassTrendKgPerWeek).signedOrMissing("kg/週"),
+                    "28日・BIA参考値",
+                    Modifier.weight(1f),
+                )
+                MetricCard(
+                    "除脂肪量傾向",
+                    (report?.leanMassTrendKgPerWeek).signedOrMissing("kg/週"),
+                    "筋肉量ではなくBIA参考",
+                    Modifier.weight(1f),
+                )
+            }
+        }
+        item {
+            Card {
+                Column(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column {
+                            Text("朝トレ継続", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                report?.let {
+                                    "${it.strengthTrainingDays} / ${it.strengthTargetDays}日"
+                                } ?: "判定保留",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                        Icon(Icons.Default.FitnessCenter, null, Modifier.size(34.dp))
+                    }
+                    val target = report?.strengthTargetDays ?: 0
+                    val progress = if (target > 0) {
+                        (report?.strengthTrainingDays ?: 0).toFloat() / target
+                    } else {
+                        0f
+                    }
+                    LinearProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(8.dp)
+                            .clip(RoundedCornerShape(4.dp)),
+                    )
+                    Text(
+                        "日々の朝トレは継続率として追跡。筋力そのものは月1回の" +
+                            "パーソナルで種目・負荷・回数を定点確認します。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetricCard(
+                    "活動量の維持",
+                    report?.stepsDailyAverage?.let {
+                        "%,d歩/日".format(Locale.JAPAN, it)
+                    } ?: "未取得",
+                    listOfNotNull(
+                        report?.stepsTargetHitDays?.let { "目標達成 $it/7日" },
+                        report?.stepsBaselinePercent?.let { "開始前比 $it%" },
+                    ).joinToString("・").ifBlank { "直近7日平均" },
+                    Modifier.weight(1f),
+                    Icons.Default.DirectionsWalk,
+                )
+                MetricCard(
+                    "有酸素活動",
+                    report?.moderateEquivalentMinutes?.let { "$it 分/週" } ?: "未取得",
+                    "中強度＋高強度×2",
+                    Modifier.weight(1f),
+                )
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetricCard(
+                    "主睡眠",
+                    report?.sleepDailyAverageMinutes?.asHoursMinutes() ?: "未取得",
+                    report?.sleepTargetHitDays?.let { "7時間以上 $it/7日" }
+                        ?: "直近7日平均",
+                    Modifier.weight(1f),
+                )
+                MetricCard(
+                    "睡眠中心拍",
+                    report?.sleepHeartRateAverageBpm?.let { "$it bpm" } ?: "未取得",
+                    report?.sleepHeartRateBaselineDeltaBpm?.let {
+                        "直前21日比 ${signed(it.toDouble())} bpm"
+                    } ?: "比較データ不足",
+                    Modifier.weight(1f),
+                )
+            }
+        }
+        item {
+            SectionHeader("今日のシグナル", "未取得と0を分け、行動の事実だけを表示")
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
                     "歩数",
-                    steps?.let { "%,d歩".format(Locale.JAPAN, it) } ?: "0歩",
+                    todayDaily?.steps?.let {
+                        "%,d歩".format(Locale.JAPAN, it)
+                    } ?: "未取得",
                     "本日累計",
                     Modifier.weight(1f),
                     Icons.Default.DirectionsWalk,
                 )
                 MetricCard(
-                    "活動消費",
-                    calories?.let { "${it.roundToLong()} kcal" } ?: "0 kcal",
-                    "本日累計",
+                    "主睡眠",
+                    todayDaily?.sleepMinutes?.asHoursMinutes() ?: "未取得",
+                    todayDaily?.sleepStartEpochMillis?.let {
+                        "${formatInstant(it)} 就寝"
+                    } ?: "終了日に集計",
                     Modifier.weight(1f),
-                    Icons.Default.FitnessCenter,
                 )
             }
         }
         item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                Row(
-                    Modifier.fillMaxWidth().padding(18.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Column {
-                        Text("今週の運動", style = MaterialTheme.typography.labelLarge)
-                        Text("${sessions}回・${lastSeven.sumOf { it.exerciseMinutes }}分", style = MaterialTheme.typography.headlineSmall)
-                        Text(
-                            "筋トレ ${lastSeven.sumOf { it.strengthMinutes }}分 / 有酸素 ${lastSeven.sumOf { it.cardioMinutes }}分",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    Icon(Icons.Default.FitnessCenter, null, Modifier.size(36.dp))
+                    Text("参考値", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "活動消費 ${
+                            todayDaily?.activeCaloriesKcal?.roundToLong()?.let { "$it kcal" }
+                                ?: "未取得"
+                        }・基礎代謝 ${
+                            todayDaily?.basalCaloriesKcal?.roundToLong()?.let { "$it kcal" }
+                                ?: "未取得"
+                        }",
+                    )
+                    Text(
+                        "ウェアラブルの消費カロリーは誤差が大きいため、" +
+                            "摂取差分や減量成否の主KPIには使いません。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
-        item { SectionHeader("直近7日", "日々の数字はぶれても、傾向を見ます") }
-        items(lastSeven) { day -> DailyRow(day) }
+        item {
+            Card {
+                Row(
+                    Modifier.fillMaxWidth().padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Default.Info, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "体組成は寝起き・トイレ後・飲食前・同程度の服装で統一。" +
+                            "服の重さは一定なら傾向の妨げになりにくいです。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
+        item { SectionHeader("直近7日", "筋トレ実施と歩数を確認") }
+        items(lastSeven) { day ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 5.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(day.date.substring(5), fontWeight = FontWeight.Medium)
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(day.steps?.let { "%,d歩".format(it) } ?: "歩数未取得")
+                    Text(
+                        if (day.strengthMinutes > 0) {
+                            "筋トレ ${day.strengthMinutes}分"
+                        } else {
+                            "筋トレ記録なし"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
         if (state.daily.isEmpty()) {
-            item { EmptyCard("まだ集計データがありません", "同期するとHealth Connectから直近28日を読み取ります", onSync) }
+            item {
+                EmptyCard(
+                    "まだ集計データがありません",
+                    "同期すると権限に応じて初回は最大90日を読み取ります",
+                    onSync,
+                )
+            }
         }
     }
 }
 
 @Composable
 private fun TrendsScreen(state: MainUiState) {
-    var rangeDays by rememberSaveable { mutableStateOf(7) }
+    var rangeDays by rememberSaveable { mutableStateOf(28) }
     val today = LocalDate.now()
     val oldest = (state.daily.map { LocalDate.parse(it.date) } +
         state.body.map { LocalDate.parse(it.date) }).minOrNull()
@@ -382,9 +531,12 @@ private fun TrendsScreen(state: MainUiState) {
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SectionHeader("期間別トレンド", "左右にスワイプして期間を移動・グラフをタップして値を確認")
+            SectionHeader(
+                "期間別トレンド",
+                "点は実測、太線は7日中央値。左右スワイプ・タップで確認",
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(7 to "7日", 28 to "28日").forEach { (days, label) ->
+                listOf(7 to "7日", 28 to "28日", 90 to "90日").forEach { (days, label) ->
                     FilterChip(
                         selected = rangeDays == days,
                         onClick = { rangeDays = days },
@@ -451,97 +603,218 @@ private fun TrendsScreen(state: MainUiState) {
                     }
                 }
                 item {
+                    if (page == 0 && state.weekly != null) {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            ),
+                        ) {
+                            Column(
+                                Modifier.fillMaxWidth().padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text("現在の28日判定", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    state.weekly.weightLossRatePercentPerWeek?.let {
+                                        "減量ペース ${DecimalFormat("0.00").format(it)}%/週・" +
+                                            weightPaceGuidance(it)
+                                    } ?: "体重データが8回・14日以上たまると判定します",
+                                )
+                            }
+                        }
+                    }
+                }
+                item {
+                    val raw = dates.map { date ->
+                        TrendPoint(date, bodyByDate[date.toString()]?.weightKg)
+                    }
                     TrendCard(
-                        "体重",
-                        "kg",
-                        dates.map { date ->
-                            TrendPoint(date, bodyByDate[date.toString()]?.weightKg)
+                        title = "体重",
+                        unit = "kg",
+                        points = raw,
+                        overlayPoints = rollingBodyMedian(
+                            dates = dates,
+                            allBody = state.body,
+                            value = { it.weightKg },
+                        ),
+                        summary = if (page == 0) {
+                            (state.weekly?.weightTrendKgPerWeek).signedOrMissing("kg/週") +
+                                "（28日傾向）"
+                        } else {
+                            null
+                        },
+                    )
+                }
+                item {
+                    val raw = dates.map { date ->
+                        TrendPoint(date, bodyByDate[date.toString()]?.fatMassKg)
+                    }
+                    TrendCard(
+                        title = "脂肪量",
+                        unit = "kg",
+                        points = raw,
+                        overlayPoints = rollingBodyMedian(
+                            dates = dates,
+                            allBody = state.body,
+                            value = { it.fatMassKg },
+                        ),
+                        summary = if (page == 0) {
+                            (state.weekly?.fatMassTrendKgPerWeek).signedOrMissing("kg/週") +
+                                "（BIA参考）"
+                        } else {
+                            null
+                        },
+                    )
+                }
+                item {
+                    val raw = dates.map { date ->
+                        TrendPoint(date, bodyByDate[date.toString()]?.leanBodyMassKg)
+                    }
+                    TrendCard(
+                        title = "除脂肪量（計算値）",
+                        unit = "kg",
+                        points = raw,
+                        overlayPoints = rollingBodyMedian(
+                            dates = dates,
+                            allBody = state.body,
+                            value = { it.leanBodyMassKg },
+                        ),
+                        summary = if (page == 0) {
+                            (state.weekly?.leanMassTrendKgPerWeek).signedOrMissing("kg/週") +
+                                "（筋肉量そのものではありません）"
+                        } else {
+                            null
+                        },
+                    )
+                }
+                item { SectionHeader("行動KPI", "筋トレ継続と、減量中も落としたくない活動量") }
+                item {
+                    TrendCard(
+                        title = "筋トレ時間",
+                        unit = "分",
+                        points = dates.map { date ->
+                            TrendPoint(
+                                date,
+                                dailyByDate[date.toString()]?.strengthMinutes?.toDouble(),
+                            )
+                        },
+                        summary = if (page == 0) {
+                            state.weekly?.let {
+                                "${it.strengthTrainingDays}/${it.strengthTargetDays}日" +
+                                    (
+                                        it.strengthAdherencePercent?.let { percent ->
+                                            "・朝トレ継続率 $percent%"
+                                        } ?: ""
+                                        )
+                            }
+                        } else {
+                            null
                         },
                     )
                 }
                 item {
                     TrendCard(
-                        "脂肪量",
-                        "kg",
-                        dates.map { date ->
-                            TrendPoint(date, bodyByDate[date.toString()]?.fatMassKg)
-                        },
-                    )
-                }
-                item {
-                    TrendCard(
-                        "除脂肪量（計算値）",
-                        "kg",
-                        dates.map { date ->
-                            TrendPoint(date, bodyByDate[date.toString()]?.leanBodyMassKg)
-                        },
-                    )
-                }
-                item {
-                    TrendCard(
-                        "歩数",
-                        "歩",
-                        dates.map { date ->
+                        title = "歩数",
+                        unit = "歩",
+                        points = dates.map { date ->
                             TrendPoint(date, dailyByDate[date.toString()]?.steps?.toDouble())
                         },
+                        summary = if (page == 0) {
+                            listOfNotNull(
+                                state.weekly?.stepsTargetHitDays?.let { "目標達成 $it/7日" },
+                                state.weekly?.stepsBaselinePercent?.let { "開始前比 $it%" },
+                            ).joinToString("・").ifBlank { null }
+                        } else {
+                            null
+                        },
                     )
                 }
+                item {
+                    TrendCard(
+                        title = "中強度換算の活動",
+                        unit = "分",
+                        points = dates.map { date ->
+                            val item = dailyByDate[date.toString()]
+                            val value = if (
+                                item?.moderateIntensityMinutes != null ||
+                                item?.vigorousIntensityMinutes != null
+                            ) {
+                                (item.moderateIntensityMinutes ?: 0) +
+                                    2 * (item.vigorousIntensityMinutes ?: 0)
+                            } else {
+                                null
+                            }
+                            TrendPoint(
+                                date,
+                                value?.toDouble(),
+                                listOfNotNull(
+                                    item?.moderateIntensityMinutes?.let { "中強度 $it分" },
+                                    item?.vigorousIntensityMinutes?.let { "高強度 $it分" },
+                                ),
+                            )
+                        },
+                        summary = "中強度＋高強度×2",
+                    )
+                }
+                item { SectionHeader("回復シグナル", "主睡眠と睡眠中心拍を別々に確認") }
+                item {
+                    TrendCard(
+                        title = "主睡眠",
+                        unit = "分",
+                        points = dates.map { date ->
+                            val item = dailyByDate[date.toString()]
+                            TrendPoint(
+                                date,
+                                item?.sleepMinutes?.toDouble(),
+                                listOfNotNull(
+                                    item?.sleepStartEpochMillis?.let {
+                                        "就寝 ${formatInstant(it)}"
+                                    },
+                                    item?.sleepEndEpochMillis?.let {
+                                        "起床 ${formatInstant(it)}"
+                                    },
+                                ),
+                            )
+                        },
+                        summary = if (page == 0) {
+                            state.weekly?.sleepTargetHitDays?.let { "7時間以上 $it/7日" }
+                        } else {
+                            null
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        title = "睡眠中心拍",
+                        unit = "bpm",
+                        points = dates.map { date ->
+                            val item = dailyByDate[date.toString()]
+                            TrendPoint(
+                                date = date,
+                                value = item?.sleepHeartRateAverageBpm?.toDouble(),
+                                details = listOfNotNull(
+                                    item?.heartRateAverageBpm?.let {
+                                        "終日平均 $it bpm（参考）"
+                                    },
+                                ),
+                            )
+                        },
+                        summary = if (page == 0) {
+                            state.weekly?.sleepHeartRateBaselineDeltaBpm?.let {
+                                "直前21日比 ${signed(it.toDouble())} bpm"
+                            }
+                        } else {
+                            null
+                        },
+                    )
+                }
+                item { SectionHeader("参考値", "消費カロリーは減量ペースの根拠にしません") }
                 item {
                     TrendCard(
                         "活動消費",
                         "kcal",
                         dates.map { date ->
                             TrendPoint(date, dailyByDate[date.toString()]?.activeCaloriesKcal)
-                        },
-                    )
-                }
-                item {
-                    TrendCard(
-                        "睡眠時間",
-                        "分",
-                        dates.map { date ->
-                            TrendPoint(date, dailyByDate[date.toString()]?.sleepMinutes?.toDouble())
-                        },
-                    )
-                }
-                item {
-                    TrendCard(
-                        "平均心拍数",
-                        "bpm",
-                        dates.map { date ->
-                            val item = dailyByDate[date.toString()]
-                            TrendPoint(
-                                date = date,
-                                value = item?.heartRateAverageBpm?.toDouble(),
-                                details = listOfNotNull(
-                                    item?.heartRateMinimumBpm?.let { "最小 $it bpm" },
-                                    item?.heartRateMaximumBpm?.let { "最大 $it bpm" },
-                                ),
-                            )
-                        },
-                    )
-                }
-                item {
-                    TrendCard(
-                        "中強度アクティビティ",
-                        "分",
-                        dates.map { date ->
-                            TrendPoint(
-                                date,
-                                dailyByDate[date.toString()]?.moderateIntensityMinutes?.toDouble(),
-                            )
-                        },
-                    )
-                }
-                item {
-                    TrendCard(
-                        "高強度アクティビティ",
-                        "分",
-                        dates.map { date ->
-                            TrendPoint(
-                                date,
-                                dailyByDate[date.toString()]?.vigorousIntensityMinutes?.toDouble(),
-                            )
                         },
                     )
                 }
@@ -581,7 +854,7 @@ private fun TrendsScreen(state: MainUiState) {
                 item {
                     Text(
                         "除脂肪量は体重と体脂肪率から計算し、水分・骨なども含みます。" +
-                            "筋肉維持の参考指標として扱ってください。",
+                            "体脂肪率も絶対値ではなく、同条件での長期傾向だけを参考にしてください。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -599,28 +872,42 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
         contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 28.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        item { SectionHeader("週次ダッシュボード", "過去7日間の健康データまとめと変化") }
+        item {
+            SectionHeader(
+                "週次ボディメイクレビュー",
+                "7日中央値と28日傾向で、脂肪減少と筋力維持の行動を確認",
+            )
+        }
         if (report == null) {
             item { EmptyCard("週報はまだありません", "Health Connectを同期すると自動作成されます") }
         } else {
             item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                    Row(
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    ),
+                ) {
+                    Column(
                         Modifier.fillMaxWidth().padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Column {
-                            Text("対象期間", style = MaterialTheme.typography.labelMedium)
-                            Text(
-                                "${report.weekStart} 〜 ${report.weekEnd}",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                        AssistChip(
-                            onClick = {},
-                            label = { Text("体組成計測 ${report.bodyMeasurementDays}日") },
+                        Text(
+                            "${report.weekStart} 〜 ${report.weekEnd}",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        Text("28日ベースの減量ペース")
+                        Text(
+                            report.weightLossRatePercentPerWeek?.let {
+                                "${DecimalFormat("0.00").format(it)} % / 週"
+                            } ?: "判定保留",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(weightPaceGuidance(report.weightLossRatePercentPerWeek))
+                        Text(
+                            "28日計測 ${report.trendMeasurementDays}日・" +
+                                "今週 ${report.bodyMeasurementDays}日",
+                            style = MaterialTheme.typography.labelSmall,
                         )
                     }
                 }
@@ -634,29 +921,53 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("体組成の変化", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("前週最終日との差分", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                "体組成の傾向",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                "カードは前週中央値比",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             MetricChangeChip(
                                 label = "体重変化",
                                 value = report.weightChangeKg,
                                 unit = "kg",
-                                lowerIsBetter = true,
+                                lowerIsBetter = null,
                                 modifier = Modifier.weight(1f),
                             )
                             MetricChangeChip(
                                 label = "脂肪量変化",
                                 value = report.fatMassChangeKg,
                                 unit = "kg",
-                                lowerIsBetter = true,
+                                lowerIsBetter = null,
                                 modifier = Modifier.weight(1f),
                             )
                             MetricChangeChip(
                                 label = "除脂肪量変化",
                                 value = report.leanMassChangeKg,
                                 unit = "kg",
-                                lowerIsBetter = false,
+                                lowerIsBetter = null,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ReportTile(
+                                title = "脂肪量 28日",
+                                mainValue = report.fatMassTrendKgPerWeek
+                                    .signedOrMissing("kg/週"),
+                                subValue = "BIAの長期傾向",
+                                modifier = Modifier.weight(1f),
+                            )
+                            ReportTile(
+                                title = "除脂肪量 28日",
+                                mainValue = report.leanMassTrendKgPerWeek
+                                    .signedOrMissing("kg/週"),
+                                subValue = leanTrendGuidance(report.leanMassTrendKgPerWeek),
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -677,7 +988,11 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text("今週の歩数推移", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "歩数の維持",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                )
                                 Text(
                                     "平均 ${report.stepsDailyAverage?.let { "%,d歩/日".format(it) } ?: "未取得"}",
                                     style = MaterialTheme.typography.labelMedium,
@@ -708,12 +1023,15 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         modifier = Modifier.weight(1f),
                     )
 
-                    val calDiff = compareDiffDouble(report.activeCaloriesDailyAverage, report.previousWeekActiveCaloriesDailyAverage)
                     ReportTile(
-                        title = "1日平均消費",
-                        mainValue = report.activeCaloriesDailyAverage?.roundToLong()?.let { "$it kcal" } ?: "未取得",
-                        subValue = calDiff?.let { "前週比 ${signed(it)} kcal" } ?: "前週データなし",
-                        icon = Icons.Default.FitnessCenter,
+                        title = "中強度換算",
+                        mainValue = report.moderateEquivalentMinutes?.let { "$it 分" }
+                            ?: "未取得",
+                        subValue = compareDiff(
+                            report.moderateEquivalentMinutes,
+                            report.previousWeekModerateEquivalentMinutes,
+                        )?.let { "前週比 ${signed(it.toDouble())}分" }
+                            ?: "中強度＋高強度×2",
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -727,21 +1045,43 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("運動実績", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("${report.exerciseSessions}回 / 計 ${report.exerciseMinutes}分", fontWeight = FontWeight.Bold)
+                            Text(
+                                "朝トレ継続",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                "${report.strengthTrainingDays}/${report.strengthTargetDays}日",
+                                fontWeight = FontWeight.Bold,
+                            )
                         }
-                        val totalEx = (report.strengthMinutes + report.cardioMinutes).coerceAtLeast(1)
-                        val strengthFraction = report.strengthMinutes.toFloat() / totalEx
+                        val strengthFraction = if (report.strengthTargetDays > 0) {
+                            report.strengthTrainingDays.toFloat() / report.strengthTargetDays
+                        } else {
+                            0f
+                        }
                         LinearProgressIndicator(
-                            progress = { strengthFraction },
+                            progress = { strengthFraction.coerceIn(0f, 1f) },
                             modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
                             color = MaterialTheme.colorScheme.primary,
                             trackColor = MaterialTheme.colorScheme.tertiaryContainer,
                         )
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text("筋トレ: ${report.strengthMinutes}分", style = MaterialTheme.typography.bodySmall)
-                            Text("有酸素: ${report.cardioMinutes}分", style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                "前週 ${report.previousWeekStrengthTrainingDays}日",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                "計 ${report.strengthMinutes}分",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                         }
+                        Text(
+                            "継続率は実施の代理指標です。実際の筋力は月1回のパーソナルで" +
+                                "同じ種目の負荷・回数を確認してください。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -749,7 +1089,11 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
             item {
                 Card {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text("リカバリー & バイタル", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            "リカバリーシグナル",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
                                 title = "平均睡眠",
@@ -760,28 +1104,100 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                                 modifier = Modifier.weight(1f),
                             )
                             ReportTile(
-                                title = "平均心拍",
-                                mainValue = report.heartRateAverageBpm?.let { "$it bpm" } ?: "未取得",
-                                subValue = if (report.heartRateMinimumBpm != null && report.heartRateMaximumBpm != null)
-                                    "最小${report.heartRateMinimumBpm}〜最大${report.heartRateMaximumBpm}"
-                                else "未計測",
+                                title = "睡眠中心拍",
+                                mainValue = report.sleepHeartRateAverageBpm?.let { "$it bpm" }
+                                    ?: "未取得",
+                                subValue = report.sleepHeartRateBaselineDeltaBpm?.let {
+                                    "直前21日比 ${signed(it.toDouble())} bpm"
+                                } ?: "比較データ不足",
                                 modifier = Modifier.weight(1f),
                             )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
-                                title = "運動強度",
-                                mainValue = "中${report.moderateIntensityMinutes ?: 0}分 / 高${report.vigorousIntensityMinutes ?: 0}分",
-                                subValue = "アクティビティ時間",
+                                title = "7時間以上",
+                                mainValue = report.sleepTargetHitDays?.let { "$it / 7日" }
+                                    ?: "未取得",
+                                subValue = "主睡眠の達成日",
                                 modifier = Modifier.weight(1f),
                             )
                             ReportTile(
-                                title = "平均基礎代謝",
-                                mainValue = report.basalCaloriesDailyAverage?.roundToLong()?.let { "$it kcal" } ?: "未取得",
-                                subValue = "1日あたり",
+                                title = "就寝時刻のばらつき",
+                                mainValue = report.sleepScheduleDeviationMinutes?.let { "$it 分" }
+                                    ?: "判定保留",
+                                subValue = "中央値からの代表偏差",
                                 modifier = Modifier.weight(1f),
                             )
                         }
+                    }
+                }
+            }
+
+            item {
+                Card {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            "測定の品質",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ReportTile(
+                                title = "体組成の時刻統一",
+                                mainValue = report.measurementTimeConsistencyPercent?.let {
+                                    "$it%"
+                                } ?: "判定保留",
+                                subValue = "中央値±90分以内",
+                                modifier = Modifier.weight(1f),
+                            )
+                            ReportTile(
+                                title = "28日計測日",
+                                mainValue = "${report.trendMeasurementDays}日",
+                                subValue = "8回・14日以上で判定",
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Text(
+                            "寝起き・トイレ後・飲食前・同程度の服装で統一。" +
+                                "BIAの脂肪量・除脂肪量は単日値で判断しません。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                ) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Text("参考値", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "活動消費 ${
+                                report.activeCaloriesDailyAverage?.roundToLong()?.let {
+                                    "$it kcal/日"
+                                } ?: "未取得"
+                            }・基礎代謝 ${
+                                report.basalCaloriesDailyAverage?.roundToLong()?.let {
+                                    "$it kcal/日"
+                                } ?: "未取得"
+                            }",
+                        )
+                        Text(
+                            "デバイスの推定消費量はエネルギー赤字の算定には使わず、" +
+                                "体重ペースと行動KPIで調整します。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -938,6 +1354,9 @@ private fun SettingsScreen(
     var age by rememberSaveable(state.goal) { mutableStateOf(state.goal?.age?.toString().orEmpty()) }
     var height by rememberSaveable(state.goal) { mutableStateOf(state.goal?.heightCm.clean().orEmpty()) }
     var sex by rememberSaveable(state.goal) { mutableStateOf(state.goal?.sex.orEmpty()) }
+    var dietStartDate by rememberSaveable(state.goal) {
+        mutableStateOf(state.goal?.dietStartDate.orEmpty())
+    }
     var deadline by rememberSaveable(state.goal) { mutableStateOf(state.goal?.deadline.orEmpty()) }
     var fatTarget by rememberSaveable(state.goal) { mutableStateOf(state.goal?.targetFatMassKg.clean().orEmpty()) }
     var leanMinimum by rememberSaveable(state.goal) { mutableStateOf(state.goal?.minimumLeanMassKg.clean().orEmpty()) }
@@ -958,16 +1377,41 @@ private fun SettingsScreen(
             SmallField(height, { height = it }, "身長 cm", Modifier.weight(1f), KeyboardType.Decimal)
             SmallField(sex, { sex = it }, "性別", Modifier.weight(1f))
         }
-        SmallField(deadline, { deadline = it }, "目標期限 YYYY-MM-DD", Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SmallField(
+                dietStartDate,
+                { dietStartDate = it },
+                "減量開始日 YYYY-MM-DD",
+                Modifier.weight(1f),
+            )
+            SmallField(
+                deadline,
+                { deadline = it },
+                "目標期限 YYYY-MM-DD",
+                Modifier.weight(1f),
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SmallField(fatTarget, { fatTarget = it }, "目標脂肪量 kg", Modifier.weight(1f), KeyboardType.Decimal)
             SmallField(leanMinimum, { leanMinimum = it }, "維持する除脂肪量 kg", Modifier.weight(1f), KeyboardType.Decimal)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SmallField(steps, { steps = it }, "1日歩数", Modifier.weight(1f), KeyboardType.Number)
-            SmallField(sessions, { sessions = it }, "週の運動回数", Modifier.weight(1f), KeyboardType.Number)
+            SmallField(sessions, { sessions = it }, "週の筋トレ日数", Modifier.weight(1f), KeyboardType.Number)
         }
-        SmallField(calories, { calories = it }, "1日の活動消費目標 kcal", Modifier.fillMaxWidth(), KeyboardType.Decimal)
+        SmallField(
+            calories,
+            { calories = it },
+            "参考：1日の活動消費目標 kcal",
+            Modifier.fillMaxWidth(),
+            KeyboardType.Decimal,
+        )
+        Text(
+            "体組成は寝起き・トイレ後・飲食前・同程度の服装で測定すると、" +
+                "28日トレンドのノイズを抑えられます。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Button(
             onClick = {
                 onSaveGoal(
@@ -975,6 +1419,7 @@ private fun SettingsScreen(
                         age = age.toIntOrNull(),
                         heightCm = height.toDoubleOrNull(),
                         sex = sex.ifBlank { null },
+                        dietStartDate = dietStartDate.ifBlank { null },
                         deadline = deadline.ifBlank { null },
                         targetFatMassKg = fatTarget.toDoubleOrNull(),
                         minimumLeanMassKg = leanMinimum.toDoubleOrNull(),
@@ -1046,7 +1491,7 @@ private fun SettingsScreen(
         if (state.sources.isEmpty()) Text("同期後に診断結果が表示されます。")
         if (!state.grantedPermissions.containsAll(state.requiredPermissions)) {
             Button(onClick = onRequestPermissions, modifier = Modifier.fillMaxWidth()) {
-                Text("睡眠・心拍・基礎代謝などの権限を許可")
+                Text("睡眠・心拍・履歴などの権限を許可")
             }
         }
         OutlinedButton(onClick = onOpenHealthConnect, modifier = Modifier.fillMaxWidth()) {
@@ -1110,21 +1555,6 @@ private fun MetricCard(
     }
 }
 
-@Composable
-private fun DailyRow(day: DailyHealthSummaryEntity) {
-    Row(
-        Modifier.fillMaxWidth().padding(vertical = 5.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(day.date.substring(5), fontWeight = FontWeight.Medium)
-        Column(horizontalAlignment = Alignment.End) {
-            Text("${day.steps?.let { "%,d歩".format(it) } ?: "歩数未取得"}  ${day.activeCaloriesKcal?.roundToLong()?.let { "$it kcal" } ?: ""}")
-            if (day.exerciseMinutes > 0) Text("運動 ${day.exerciseMinutes}分", style = MaterialTheme.typography.labelSmall)
-        }
-    }
-}
-
 private data class TrendPoint(
     val date: LocalDate,
     val value: Double?,
@@ -1132,7 +1562,13 @@ private data class TrendPoint(
 )
 
 @Composable
-private fun TrendCard(title: String, unit: String, points: List<TrendPoint>) {
+private fun TrendCard(
+    title: String,
+    unit: String,
+    points: List<TrendPoint>,
+    overlayPoints: List<TrendPoint> = emptyList(),
+    summary: String? = null,
+) {
     var selectedIndex by remember(points) { mutableStateOf<Int?>(null) }
     val measured = points.mapNotNull { it.value }
     val selected = selectedIndex?.let { points.getOrNull(it) }
@@ -1146,6 +1582,13 @@ private fun TrendCard(title: String, unit: String, points: List<TrendPoint>) {
                     } ?: "未取得",
                 )
             }
+            summary?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Spacer(Modifier.height(12.dp))
             if (measured.size < 2) {
                 Box(Modifier.fillMaxWidth().height(92.dp), contentAlignment = Alignment.Center) {
@@ -1154,6 +1597,7 @@ private fun TrendCard(title: String, unit: String, points: List<TrendPoint>) {
             } else {
                 InteractiveSparkline(
                     points = points,
+                    overlayPoints = overlayPoints,
                     selectedIndex = selectedIndex,
                     onSelect = { selectedIndex = it },
                     modifier = Modifier.fillMaxWidth().height(108.dp),
@@ -1185,7 +1629,11 @@ private fun TrendCard(title: String, unit: String, points: List<TrendPoint>) {
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(
-                        "${measured.size}測定・タップで詳細",
+                        if (overlayPoints.any { it.value != null }) {
+                            "${measured.size}測定・太線は7日中央値"
+                        } else {
+                            "${measured.size}測定・タップで詳細"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                     )
                     Text(
@@ -1201,11 +1649,13 @@ private fun TrendCard(title: String, unit: String, points: List<TrendPoint>) {
 @Composable
 private fun InteractiveSparkline(
     points: List<TrendPoint>,
+    overlayPoints: List<TrendPoint> = emptyList(),
     selectedIndex: Int?,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val color = MaterialTheme.colorScheme.primary
+    val rawColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
+    val trendColor = MaterialTheme.colorScheme.primary
     val selectionColor = MaterialTheme.colorScheme.tertiary
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     Canvas(
@@ -1220,48 +1670,64 @@ private fun InteractiveSparkline(
                 }
             },
     ) {
-        val values = points.mapNotNull { it.value }
+        val values = (points + overlayPoints).mapNotNull { it.value }
         val min = values.minOrNull() ?: return@Canvas
         val max = values.maxOrNull() ?: return@Canvas
         val span = (max - min).takeIf { it > 0.0001 } ?: 1.0
         val stepX = if (points.size > 1) size.width / (points.size - 1) else 0f
-        var path = Path()
-        var pathPointCount = 0
+        fun drawSeries(
+            series: List<TrendPoint>,
+            color: androidx.compose.ui.graphics.Color,
+            strokeWidth: Float,
+            showDots: Boolean,
+        ) {
+            var path = Path()
+            var pathPointCount = 0
 
-        fun drawCurrentPath() {
-            if (pathPointCount >= 2) {
-                drawPath(
-                    path,
-                    color,
-                    style = androidx.compose.ui.graphics.drawscope.Stroke(
-                        width = 4f,
-                        cap = StrokeCap.Round,
-                    ),
+            fun drawCurrentPath() {
+                if (pathPointCount >= 2) {
+                    drawPath(
+                        path,
+                        color,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(
+                            width = strokeWidth,
+                            cap = StrokeCap.Round,
+                        ),
+                    )
+                }
+                path = Path()
+                pathPointCount = 0
+            }
+
+            series.forEachIndexed { index, trendPoint ->
+                val value = trendPoint.value
+                if (value == null) {
+                    drawCurrentPath()
+                    return@forEachIndexed
+                }
+                val chartPoint = Offset(
+                    x = stepX * index,
+                    y = size.height -
+                        (((value - min) / span).toFloat() * size.height * 0.82f) -
+                        size.height * 0.09f,
                 )
+                if (pathPointCount == 0) {
+                    path.moveTo(chartPoint.x, chartPoint.y)
+                } else {
+                    path.lineTo(chartPoint.x, chartPoint.y)
+                }
+                pathPointCount++
+                if (showDots) drawCircle(color = color, radius = 3.5f, center = chartPoint)
             }
-            path = Path()
-            pathPointCount = 0
+            drawCurrentPath()
         }
 
-        points.forEachIndexed { index, trendPoint ->
-            val value = trendPoint.value
-            if (value == null) {
-                drawCurrentPath()
-                return@forEachIndexed
-            }
-            val chartPoint = Offset(
-                x = stepX * index,
-                y = size.height - (((value - min) / span).toFloat() * size.height * 0.82f) - size.height * 0.09f,
-            )
-            if (pathPointCount == 0) {
-                path.moveTo(chartPoint.x, chartPoint.y)
-            } else {
-                path.lineTo(chartPoint.x, chartPoint.y)
-            }
-            pathPointCount++
-            drawCircle(color = color, radius = 4f, center = chartPoint)
+        drawSeries(points, rawColor, 2.5f, true)
+        if (overlayPoints.isNotEmpty()) {
+            drawSeries(overlayPoints, trendColor, 5f, false)
+        } else {
+            drawSeries(points, trendColor, 4f, false)
         }
-        drawCurrentPath()
 
         selectedIndex?.takeIf { it in points.indices }?.let { index ->
             val x = stepX * index
@@ -1297,10 +1763,12 @@ private fun MetricChangeChip(
     label: String,
     value: Double?,
     unit: String,
-    lowerIsBetter: Boolean,
+    lowerIsBetter: Boolean?,
     modifier: Modifier = Modifier,
 ) {
-    val favorable = value?.let { if (lowerIsBetter) it <= 0 else it >= 0 }
+    val favorable = lowerIsBetter?.let { lower ->
+        value?.let { if (lower) it <= 0 else it >= 0 }
+    }
     val containerColor = when (favorable) {
         true -> MaterialTheme.colorScheme.primaryContainer
         false -> MaterialTheme.colorScheme.errorContainer
@@ -1350,28 +1818,6 @@ private fun compareDiff(current: Long?, previous: Long?): Long? {
     return current - previous
 }
 
-private fun compareDiffDouble(current: Double?, previous: Double?): Double? {
-    if (current == null || previous == null) return null
-    return current - previous
-}
-
-@Composable
-private fun ChangeRow(label: String, value: Double?, unit: String, lowerIsBetter: Boolean) {
-    val favorable = value?.let { if (lowerIsBetter) it <= 0 else it >= 0 }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label)
-        Text(
-            value?.let { "${signed(it)} $unit" } ?: "データ不足",
-            color = when (favorable) {
-                true -> MaterialTheme.colorScheme.primary
-                false -> MaterialTheme.colorScheme.error
-                null -> MaterialTheme.colorScheme.onSurfaceVariant
-            },
-            fontWeight = FontWeight.SemiBold,
-        )
-    }
-}
-
 @Composable
 private fun AdviceBlock(title: String, body: String) {
     Column {
@@ -1398,8 +1844,43 @@ private fun SmallField(
     )
 }
 
-private fun List<Number>.averageOrNull(): Double? =
-    if (isEmpty()) null else sumOf { it.toDouble() } / size
+private fun rollingBodyMedian(
+    dates: List<LocalDate>,
+    allBody: List<BodyCompositionEntity>,
+    value: (BodyCompositionEntity) -> Double?,
+): List<TrendPoint> {
+    val measurements = allBody.mapNotNull { item ->
+        value(item)?.let { LocalDate.parse(item.date) to it }
+    }
+    return dates.map { date ->
+        val from = date.minusDays(6)
+        TrendPoint(
+            date = date,
+            value = TrendMath.median(
+                measurements.filter { it.first in from..date }.map { it.second },
+            ),
+        )
+    }
+}
+
+private fun weightPaceGuidance(rate: Double?): String = when {
+    rate == null -> "8回以上かつ14日以上の体重データが必要です"
+    rate < 0.0 -> "体重は維持〜増加傾向。まず測定条件と摂取・活動の継続を確認"
+    rate < 0.15 -> "ほぼ維持。2週間以上続く場合だけ行動を小さく調整"
+    rate < 0.30 -> "ゆっくりした減量。筋力維持を優先するなら許容範囲"
+    rate <= 0.70 -> "筋力維持を優先した目安帯（0.3〜0.7%/週）"
+    rate <= 1.00 -> "やや速め。筋力・睡眠・除脂肪量傾向を確認"
+    else -> "速すぎる可能性。摂取不足や回復不足を確認"
+}
+
+private fun leanTrendGuidance(trend: Double?): String = when {
+    trend == null -> "判定データ不足"
+    trend < -0.15 -> "低下傾向・条件と筋力を確認"
+    else -> "明確な低下なし・BIA参考"
+}
+
+private fun Double?.signedOrMissing(unit: String): String =
+    this?.let { "${signed(it)} $unit" } ?: "未取得"
 
 private val TREND_DATE_FORMAT = DateTimeFormatter.ofPattern("M/d")
 private val TREND_DETAIL_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy/M/d (E)", Locale.JAPAN)

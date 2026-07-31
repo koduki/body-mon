@@ -30,12 +30,15 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.roundToLong
 
 data class HealthSyncBundle(
     val daily: List<DailyHealthSummaryEntity>,
     val body: List<BodyCompositionEntity>,
     val sources: List<HealthSourceStatusEntity>,
     val exerciseSessions: List<ExerciseSessionEntity>,
+    val rangeStartEpochMillis: Long,
+    val rangeEndEpochMillisExclusive: Long,
 )
 
 enum class HealthConnectAvailability {
@@ -86,6 +89,12 @@ class HealthConnectGateway(private val context: Context) {
                 HealthConnectFeatures.FEATURE_ACTIVITY_INTENSITY,
             ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
 
+    fun historyReadAvailable(): Boolean =
+        availability() == HealthConnectAvailability.AVAILABLE &&
+            client.features.getFeatureStatus(
+                HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_HISTORY,
+            ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+
     fun requestedPermissions(): Set<String> = buildSet {
         addAll(corePermissions)
         add(sleepPermission)
@@ -94,6 +103,9 @@ class HealthConnectGateway(private val context: Context) {
         if (activityIntensityAvailable()) add(activityIntensityPermission)
         if (backgroundReadAvailable()) {
             add(HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND)
+        }
+        if (historyReadAvailable()) {
+            add(HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY)
         }
     }
 
@@ -109,6 +121,10 @@ class HealthConnectGateway(private val context: Context) {
     suspend fun hasBackgroundPermission(): Boolean =
         !backgroundReadAvailable() ||
             HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in grantedPermissions()
+
+    suspend fun hasHistoryPermission(): Boolean =
+        historyReadAvailable() &&
+            HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY in grantedPermissions()
 
     suspend fun sync(days: Long = 28, zoneId: ZoneId = ZoneId.systemDefault()): HealthSyncBundle {
         check(availability() == HealthConnectAvailability.AVAILABLE) {
@@ -140,7 +156,11 @@ class HealthConnectGateway(private val context: Context) {
             start.minus(Duration.ofDays(1)),
             end,
         )
-        val heartRateRecords = readIfGranted<HeartRateRecord>(canReadHeartRate, start, end)
+        val heartRateRecords = readIfGranted<HeartRateRecord>(
+            canReadHeartRate,
+            start.minus(Duration.ofDays(1)),
+            end,
+        )
         val basalRateRecords = readIfGranted<BasalMetabolicRateRecord>(
             canReadBasalRate,
             start,
@@ -156,10 +176,17 @@ class HealthConnectGateway(private val context: Context) {
             val date = startDate.plusDays(offset)
             val dayStart = date.atStartOfDay(zoneId).toInstant()
             val dayEnd = date.plusDays(1).atStartOfDay(zoneId).toInstant()
+            val mainSleep = sleepRecords
+                .filter { it.endTime > dayStart && it.endTime <= dayEnd }
+                .maxByOrNull { Duration.between(it.startTime, it.endTime) }
+            val sleepHeartRateSamples = mainSleep?.let { sleep ->
+                heartRateRecords.flatMap { it.samples }.filter { sample ->
+                    sample.time >= sleep.startTime && sample.time <= sleep.endTime
+                }
+            }.orEmpty()
             val result = aggregateDaily(
                 start = dayStart,
                 end = dayEnd,
-                includeSleep = canReadSleep,
                 includeHeartRate = canReadHeartRate,
                 includeBasalRate = canReadBasalRate,
                 includeIntensity = canReadIntensity,
@@ -207,7 +234,17 @@ class HealthConnectGateway(private val context: Context) {
                 strengthMinutes = strengthMinutes,
                 cardioMinutes = cardioMinutes,
                 exerciseSessionCount = sessions.size,
-                sleepMinutes = result[SleepSessionRecord.SLEEP_DURATION_TOTAL]?.toMinutes(),
+                sleepMinutes = mainSleep?.let {
+                    Duration.between(it.startTime, it.endTime).toMinutes()
+                        .coerceAtLeast(0)
+                },
+                sleepStartEpochMillis = mainSleep?.startTime?.toEpochMilli(),
+                sleepEndEpochMillis = mainSleep?.endTime?.toEpochMilli(),
+                sleepHeartRateAverageBpm = sleepHeartRateSamples
+                    .takeIf { it.isNotEmpty() }
+                    ?.map { it.beatsPerMinute }
+                    ?.average()
+                    ?.roundToLong(),
                 moderateIntensityMinutes = result[
                     ActivityIntensityRecord.MODERATE_DURATION_TOTAL
                 ]?.toMinutes(),
@@ -347,13 +384,14 @@ class HealthConnectGateway(private val context: Context) {
             body = body,
             sources = sources,
             exerciseSessions = exerciseSessions,
+            rangeStartEpochMillis = start.toEpochMilli(),
+            rangeEndEpochMillisExclusive = end.toEpochMilli(),
         )
     }
 
     private suspend fun aggregateDaily(
         start: Instant,
         end: Instant,
-        includeSleep: Boolean,
         includeHeartRate: Boolean,
         includeBasalRate: Boolean,
         includeIntensity: Boolean,
@@ -362,7 +400,6 @@ class HealthConnectGateway(private val context: Context) {
             add(StepsRecord.COUNT_TOTAL)
             add(DistanceRecord.DISTANCE_TOTAL)
             add(ActiveCaloriesBurnedRecord.ACTIVE_CALORIES_TOTAL)
-            if (includeSleep) add(SleepSessionRecord.SLEEP_DURATION_TOTAL)
             if (includeHeartRate) {
                 add(HeartRateRecord.BPM_AVG)
                 add(HeartRateRecord.BPM_MIN)

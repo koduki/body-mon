@@ -6,6 +6,10 @@ import com.master.healthcoach.domain.AdviceResponse
 import com.master.healthcoach.domain.WeeklySnapshot
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 class HealthChatCoordinator(
     private val repository: HealthRepository,
@@ -47,8 +51,10 @@ class HealthChatCoordinator(
         val goal = repository.getGoal()
         val prompt = buildString {
             appendLine("次の週次健康サマリを分析してください。")
-            appendLine(json.encodeToString(WeeklySnapshot.serializer(), snapshot))
-            appendLine("目標: $goal")
+            appendLine(
+                snapshot.existingAiContract().toString(),
+            )
+            appendLine("目標: ${goal?.copy(dietStartDate = null)}")
             appendLine("会話から確認済みの習慣: ${repository.getMemory()?.summary.orEmpty()}")
             appendLine("習慣と数値の関連は、根拠がある範囲だけhabitInsightsへ最大3件示してください。")
         }
@@ -98,5 +104,56 @@ class HealthChatCoordinator(
     companion object {
         private const val CONTEXT_MESSAGE_LIMIT = 20
         private const val HABIT_REFRESH_USER_MESSAGES = 6
+    }
+}
+
+/**
+ * Dashboard-only KPIs stay on device. Manual Gemini analysis keeps the pre-existing
+ * weekly payload contract instead of silently expanding sensitive health-data egress.
+ */
+internal fun WeeklySnapshot.existingAiContract(): JsonObject = buildJsonObject {
+    put("weekStart", weekStart)
+    put("weekEnd", weekEnd)
+    fatMassChangeKg?.let { put("fatMassChangeKg", it) }
+    leanMassChangeKg?.let { put("leanMassChangeKg", it) }
+    weightChangeKg?.let { put("weightChangeKg", it) }
+    put("bodyMeasurementDays", bodyMeasurementDays)
+    stepsDailyAverage?.let { put("stepsDailyAverage", it) }
+    activeCaloriesDailyAverage?.let { put("activeCaloriesDailyAverage", it) }
+    put("exerciseSessions", exerciseSessions)
+    put("exerciseMinutes", exerciseMinutes)
+    put("strengthMinutes", strengthMinutes)
+    put("cardioMinutes", cardioMinutes)
+    previousWeekStepsDailyAverage?.let { put("previousWeekStepsDailyAverage", it) }
+    previousWeekActiveCaloriesDailyAverage?.let {
+        put("previousWeekActiveCaloriesDailyAverage", it)
+    }
+    put("dataLimitations", buildJsonArray {
+        dataLimitations.forEach { add(it) }
+    })
+    sleepDailyAverageMinutes?.let { put("sleepDailyAverageMinutes", it) }
+    put("sleepMeasurementDays", sleepMeasurementDays)
+    moderateIntensityMinutes?.let { put("moderateIntensityMinutes", it) }
+    vigorousIntensityMinutes?.let { put("vigorousIntensityMinutes", it) }
+    heartRateAverageBpm?.let { put("heartRateAverageBpm", it) }
+    heartRateMinimumBpm?.let { put("heartRateMinimumBpm", it) }
+    heartRateMaximumBpm?.let { put("heartRateMaximumBpm", it) }
+    put("heartRateMeasurementDays", heartRateMeasurementDays)
+    basalCaloriesDailyAverage?.let { put("basalCaloriesDailyAverage", it) }
+    put("basalCaloriesMeasurementDays", basalCaloriesMeasurementDays)
+    previousWeekSleepDailyAverageMinutes?.let {
+        put("previousWeekSleepDailyAverageMinutes", it)
+    }
+    previousWeekModerateIntensityMinutes?.let {
+        put("previousWeekModerateIntensityMinutes", it)
+    }
+    previousWeekVigorousIntensityMinutes?.let {
+        put("previousWeekVigorousIntensityMinutes", it)
+    }
+    previousWeekHeartRateAverageBpm?.let {
+        put("previousWeekHeartRateAverageBpm", it)
+    }
+    previousWeekBasalCaloriesDailyAverage?.let {
+        put("previousWeekBasalCaloriesDailyAverage", it)
     }
 }
