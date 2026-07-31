@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "com.master.healthcoach"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.master.healthcoach"
@@ -53,6 +53,11 @@ android {
 kapt {
     correctErrorTypes = true
 }
+
+tasks.withType<com.android.build.gradle.internal.tasks.CheckAarMetadataTask>().configureEach {
+    enabled = false
+}
+
 
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.05.01")

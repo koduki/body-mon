@@ -44,8 +44,8 @@ class WeeklyReportBuilderTest {
 
         assertEquals(-0.5, report.fatMassChangeKg!!, 0.001)
         assertEquals(0.0, report.leanMassChangeKg!!, 0.001)
-        assertEquals(8_000, report.stepsDailyAverage)
-        assertEquals(6_000, report.previousWeekStepsDailyAverage)
+        assertEquals(8_000L, report.stepsDailyAverage)
+        assertEquals(6_000L, report.previousWeekStepsDailyAverage)
         assertEquals(420L, report.sleepDailyAverageMinutes)
         assertEquals(140L, report.moderateIntensityMinutes)
         assertEquals(35L, report.vigorousIntensityMinutes)
