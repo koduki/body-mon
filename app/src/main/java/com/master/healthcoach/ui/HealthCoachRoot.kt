@@ -1226,13 +1226,24 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                     if (state.isSending) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     else Icon(Icons.Default.AutoAwesome, null)
                     Spacer(Modifier.width(8.dp))
-                    Text(if (state.apiKeyConfigured) "Geminiで今週をAI分析" else "設定でAPIキーを登録してください")
+                    Text(
+                        if (state.apiKeyConfigured) {
+                            "専門コーチで今週を分析"
+                        } else {
+                            "設定でAPIキーを登録してください"
+                        },
+                    )
                 }
             }
         }
 
         state.weeklyAdvice?.let { advice ->
-            item { SectionHeader("AI分析レポート", "Geminiによる健康・習慣アドバイス") }
+            item {
+                SectionHeader(
+                    "専門コーチ分析",
+                    "端末内KPI判定とGeminiによる健康・習慣アドバイス",
+                )
+            }
             item {
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1249,6 +1260,10 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             advice.nextActions.forEachIndexed { index, action ->
                                 Text("${index + 1}. $action")
                             }
+                        }
+                        if (advice.dataLimitations.isNotEmpty()) {
+                            Text("判定の限界", fontWeight = FontWeight.SemiBold)
+                            advice.dataLimitations.take(3).forEach { Text("・$it") }
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             SuggestionChip(onClick = {}, label = { Text("確からしさ: ${advice.confidence}") })
@@ -1284,8 +1299,9 @@ private fun ChatScreen(state: MainUiState, onSendChat: (String) -> Unit) {
             if (state.messages.isEmpty()) {
                 item {
                     EmptyCard(
-                        "健康データについて質問できます",
-                        "例：先月、脂肪量と活動量はどう変わった？\n必要な期間だけ端末側で集計してGeminiへ渡します。",
+                        "専門コーチへ相談できます",
+                        "例：今の減量ペースで筋力を守れそう？\n" +
+                            "Geminiの回答へ、端末内KPIによる専門家判定を合成します。",
                     )
                 }
             }

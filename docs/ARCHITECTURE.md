@@ -51,6 +51,19 @@ UIとGeminiが同じ定義を使うため、端末内の`WeeklyReportBuilder`が
 手動週次AI分析も`existingAiContract()`で従来の週報項目だけを再構成し、KPI追加に
 伴って外部送信項目が暗黙に増えないようにする。減量開始日もAIペイロードから除外する。
 
+## 専門コーチを端末内で合成する
+
+長いプロンプトだけに健康判断を任せず、`CoachAssessmentEngine`が週次KPIを
+「順調・要観察・調整推奨・判定保留」と根拠、最大2件の行動へ変換する。
+Geminiは従来の送信契約で応答し、その後に`CoachResponseComposer`が端末内判定を
+合成する。これにより、判定ロジックをJUnitで検証し、新規KPIやコーチシグナルを
+外部送信せずに専門性と一貫性を追加する。
+
+自由チャットと週次分析は共通の
+`BodyRecompositionCoachPolicy`をsystem instructionへ含める。筋力維持を減量速度より
+優先し、観測・解釈・提案を分け、行動を最大2件に絞る。詳細は
+[`COACH_POLICY.md`](COACH_POLICY.md)を参照する。
+
 ## 直接APIキー方式
 
 完全個人利用のため、利用者本人が入力したGemini APIキーをAndroid Keystoreで暗号化する。コードにはキーを含めない。一般配布へ移行する場合、この判断は無効となり、認証付きバックエンドが必要になる。

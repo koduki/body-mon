@@ -4,7 +4,8 @@ Health Connectに集約された体組成・活動・睡眠・心拍・基礎代
 
 確定した機能範囲と受入条件は [`docs/MVP_SPEC.md`](docs/MVP_SPEC.md)、設計判断は
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)、KPIの計算と根拠は
-[`docs/KPI_DESIGN.md`](docs/KPI_DESIGN.md) にまとめています。
+[`docs/KPI_DESIGN.md`](docs/KPI_DESIGN.md)、専門家判定の方針は
+[`docs/COACH_POLICY.md`](docs/COACH_POLICY.md) にまとめています。
 
 ## MVPでできること
 
@@ -23,6 +24,8 @@ Health Connectに集約された体組成・活動・睡眠・心拍・基礎代
 - Gemini Function Callingで、質問に必要な期間だけ端末内DBから取得する自由質問
 - 一つの会話履歴と、習慣・制約に絞った長期メモリーの端末内保存
 - 会話から確認した習慣を、手動の週次AI分析へ反映
+- 端末内KPIを専門家判定・根拠・最大2件の行動へ変換し、Gemini応答後に合成
+- 新しいKPIやコーチシグナルをGeminiへ追加送信しないプライバシー境界
 
 アカウント、アプリ用バックエンド、クラウドDB、BigQuery、広告・分析SDKは使用しません。
 
@@ -102,7 +105,7 @@ Androidの省電力制御によりWorkManagerの実行時刻は厳密ではあ�
 - `data/db`: RoomエンティティとDAO
 - `data/llm`: Gemini REST、Function Calling、ローカル健康ツール
 - `data/security`: Android KeystoreによるAPIキー保護
-- `domain`: 体組成計算・週次レポート
+- `domain`: 体組成計算・週次レポート・端末内の専門コーチ判定
 - `ui`: Compose画面とViewModel
 - `work`: 日次WorkManager
 

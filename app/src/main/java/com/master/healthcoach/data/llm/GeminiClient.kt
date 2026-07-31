@@ -260,7 +260,7 @@ class GeminiClient(
             put("nextActions", buildJsonObject {
                 put("type", "array")
                 put("items", stringSchema())
-                put("maxItems", 3)
+                put("maxItems", 2)
             })
             put("habitInsights", buildJsonObject {
                 put("type", "array")

@@ -1,5 +1,6 @@
 package com.master.healthcoach.data.llm
 
+import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.domain.WeeklySnapshot
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -40,5 +41,30 @@ class HealthChatCoordinatorPayloadTest {
         assertFalse(payload.contains("sleepHeartRateAverageBpm"))
         assertFalse(payload.contains("dietStartDate"))
         assertFalse(payload.contains("2026-07-01"))
+    }
+
+    @Test
+    fun `diet start date is excluded from Gemini profile`() {
+        val goal = GoalEntity(
+            age = 40,
+            heightCm = 172.0,
+            sex = "male",
+            dietStartDate = "2026-07-01",
+            deadline = "2026-12-31",
+            targetFatMassKg = 16.0,
+            minimumLeanMassKg = 58.0,
+            dailySteps = 8_000,
+            weeklyExerciseSessions = 7,
+        )
+        val profile = goal.existingAiProfile()
+        val analysisGoal = goal.existingAiGoal()
+
+        assertTrue(profile.contains("年齢=40"))
+        assertTrue(profile.contains("期限=2026-12-31"))
+        assertFalse(profile.contains("dietStartDate"))
+        assertFalse(profile.contains("2026-07-01"))
+        assertTrue(analysisGoal.contains("1日歩数=8000"))
+        assertFalse(analysisGoal.contains("dietStartDate"))
+        assertFalse(analysisGoal.contains("2026-07-01"))
     }
 }
