@@ -213,15 +213,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         require(
             goal.weeklyExerciseSessions == null ||
-                goal.weeklyExerciseSessions in 0..30,
+                goal.weeklyExerciseSessions in 0..7,
         ) {
-            "週の運動回数は0〜30回の範囲で入力してください"
+            "週の筋トレ日数は0〜7日の範囲で入力してください"
         }
         require(
             goal.dailyActiveCaloriesKcal == null ||
                 goal.dailyActiveCaloriesKcal in 1.0..5_000.0,
         ) {
             "活動消費目標は1〜5,000kcalの範囲で入力してください"
+        }
+        require(
+            goal.dietStartDate == null ||
+                runCatching { LocalDate.parse(goal.dietStartDate) }.isSuccess,
+        ) {
+            "減量開始日はYYYY-MM-DD形式で入力してください"
         }
         require(
             goal.deadline == null ||

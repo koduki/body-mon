@@ -41,22 +41,38 @@ class HealthRepository(
     suspend fun hasBackgroundPermission(): Boolean = gateway.hasBackgroundPermission()
 
     suspend fun sync(): WeeklyReportEntity {
-        val bundle = gateway.sync()
+        val today = LocalDate.now()
+        val earliestDaily = dao.earliestDailyDate()?.let {
+            runCatching { LocalDate.parse(it) }.getOrNull()
+        }
+        val canBackfillHistory = gateway.hasHistoryPermission()
+        val needsInitialBackfill = canBackfillHistory && (
+            earliestDaily == null || earliestDaily > today.minusDays(89)
+            )
+        val bundle = gateway.sync(days = if (needsInitialBackfill) 90 else 28)
         database.withTransaction {
             dao.upsertDaily(bundle.daily)
             dao.upsertBody(bundle.body)
             dao.upsertSources(bundle.sources)
-            dao.clearExerciseSessions()
+            dao.deleteExerciseSessionsInRange(
+                bundle.rangeStartEpochMillis,
+                bundle.rangeEndEpochMillisExclusive,
+            )
             dao.upsertExerciseSessions(bundle.exerciseSessions)
         }
         return rebuildWeekly()
     }
 
     suspend fun rebuildWeekly(today: LocalDate = LocalDate.now()): WeeklyReportEntity {
-        val from = today.minusDays(13).toString()
+        val from = today.minusDays(89).toString()
         val daily = dao.getDaily(from, today.toString())
         val body = dao.getBody(from, today.toString())
-        val snapshot = WeeklyReportBuilder.build(today, daily, body)
+        val snapshot = WeeklyReportBuilder.build(
+            today = today,
+            daily = daily,
+            body = body,
+            goal = dao.getGoal(),
+        )
         return WeeklyReportEntity(
             weekStart = snapshot.weekStart,
             snapshotJson = json.encodeToString(snapshot),
@@ -64,7 +80,10 @@ class HealthRepository(
         ).also { dao.upsertWeekly(it) }
     }
 
-    suspend fun saveGoal(goal: GoalEntity) = dao.upsertGoal(goal.copy(id = 1))
+    suspend fun saveGoal(goal: GoalEntity) {
+        dao.upsertGoal(goal.copy(id = 1))
+        rebuildWeekly()
+    }
     suspend fun getGoal(): GoalEntity? = dao.getGoal()
     suspend fun getLatestWeekly(): WeeklyReportEntity? = dao.getLatestWeekly()
 

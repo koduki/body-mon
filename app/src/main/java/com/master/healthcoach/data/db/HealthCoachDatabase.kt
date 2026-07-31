@@ -18,7 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChatMessageEntity::class,
         ConversationMemoryEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class HealthCoachDatabase : RoomDatabase() {
@@ -30,7 +30,7 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 context.applicationContext,
                 HealthCoachDatabase::class.java,
                 "health-coach.db",
-            ).addMigrations(MIGRATION_1_2).build()
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
@@ -59,6 +59,24 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE daily_health_summary ADD COLUMN basalCaloriesKcal REAL",
                 )
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE daily_health_summary " +
+                        "ADD COLUMN sleepStartEpochMillis INTEGER",
+                )
+                db.execSQL(
+                    "ALTER TABLE daily_health_summary " +
+                        "ADD COLUMN sleepEndEpochMillis INTEGER",
+                )
+                db.execSQL(
+                    "ALTER TABLE daily_health_summary " +
+                        "ADD COLUMN sleepHeartRateAverageBpm INTEGER",
+                )
+                db.execSQL("ALTER TABLE goals ADD COLUMN dietStartDate TEXT")
             }
         }
     }

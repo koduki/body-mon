@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "com.master.healthcoach"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.master.healthcoach"
