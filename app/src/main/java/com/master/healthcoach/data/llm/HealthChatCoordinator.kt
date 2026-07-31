@@ -7,6 +7,7 @@ import com.master.healthcoach.domain.WeeklySnapshot
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -129,7 +130,7 @@ internal fun WeeklySnapshot.existingAiContract(): JsonObject = buildJsonObject {
         put("previousWeekActiveCaloriesDailyAverage", it)
     }
     put("dataLimitations", buildJsonArray {
-        dataLimitations.forEach { add(it) }
+        dataLimitations.forEach { add(JsonPrimitive(it)) }
     })
     sleepDailyAverageMinutes?.let { put("sleepDailyAverageMinutes", it) }
     put("sleepMeasurementDays", sleepMeasurementDays)

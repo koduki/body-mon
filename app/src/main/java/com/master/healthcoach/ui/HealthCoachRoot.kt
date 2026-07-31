@@ -748,8 +748,8 @@ private fun TrendsScreen(state: MainUiState) {
                                 date,
                                 value?.toDouble(),
                                 listOfNotNull(
-                                    item?.moderateIntensityMinutes?.let { "中強度 $it分" },
-                                    item?.vigorousIntensityMinutes?.let { "高強度 $it分" },
+                                    item?.moderateIntensityMinutes?.let { "中強度 ${it}分" },
+                                    item?.vigorousIntensityMinutes?.let { "高強度 ${it}分" },
                                 ),
                             )
                         },
