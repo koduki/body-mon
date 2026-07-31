@@ -25,6 +25,6 @@ jobs:
           cache: gradle
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK
-        run: sdkmanager --channel=3 "platforms;android-37"
+        run: sdkmanager "platforms;android-36"
       - name: Unit test and assemble
         run: bash gradlew testDebugUnitTest assembleDebug
