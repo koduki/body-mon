@@ -1,6 +1,7 @@
 package com.master.healthcoach.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.master.healthcoach.HealthCoachApplication
@@ -11,6 +12,8 @@ import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.data.db.ExerciseSessionEntity
 import com.master.healthcoach.data.db.HealthSourceStatusEntity
 import com.master.healthcoach.data.health.HealthConnectAvailability
+import com.master.healthcoach.data.llm.ChatAttachment
+import com.master.healthcoach.data.llm.ChatAttachmentReader
 import com.master.healthcoach.domain.AdviceResponse
 import com.master.healthcoach.domain.WeeklySnapshot
 import java.time.LocalDate
@@ -39,6 +42,8 @@ data class MainUiState(
     val apiKeyConfigured: Boolean = false,
     val modelId: String = "gemini-3.6-flash",
     val weeklyAdvice: AdviceResponse? = null,
+    val chatAttachments: List<ChatAttachment> = emptyList(),
+    val isAddingAttachments: Boolean = false,
     val message: String? = null,
 ) {
     val hasCorePermissions: Boolean
@@ -48,6 +53,7 @@ data class MainUiState(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val container = (application as HealthCoachApplication).container
     private val repository = container.repository
+    private val attachmentReader = ChatAttachmentReader(application.contentResolver)
     private val transient = MutableStateFlow(
         MainUiState(
             availability = repository.availability(),
@@ -150,12 +156,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendChat(message: String) {
-        if (message.isBlank() || transient.value.isSending) return
+        val attachments = transient.value.chatAttachments
+        if (
+            (message.isBlank() && attachments.isEmpty()) ||
+            transient.value.isSending ||
+            transient.value.isAddingAttachments
+        ) {
+            return
+        }
         viewModelScope.launch {
             update { it.copy(isSending = true, message = null) }
-            runCatching { container.chatCoordinator.sendMessage(message) }
+            runCatching { container.chatCoordinator.sendMessage(message, attachments) }
+                .onSuccess {
+                    update { state -> state.copy(chatAttachments = emptyList()) }
+                }
                 .onFailure { error -> update { it.copy(message = error.userMessage()) } }
             update { it.copy(isSending = false) }
+        }
+    }
+
+    fun addChatAttachments(uris: List<Uri>) {
+        if (
+            uris.isEmpty() ||
+            transient.value.isSending ||
+            transient.value.isAddingAttachments
+        ) {
+            return
+        }
+        viewModelScope.launch {
+            val existing = transient.value.chatAttachments
+            update { it.copy(isAddingAttachments = true, message = null) }
+            runCatching { attachmentReader.read(uris, existing) }
+                .onSuccess { selection ->
+                    update { state ->
+                        state.copy(
+                            chatAttachments = (state.chatAttachments + selection.attachments)
+                                .distinctBy { it.id },
+                            message = selection.warnings
+                                .takeIf { it.isNotEmpty() }
+                                ?.joinToString("\n"),
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    update { it.copy(message = error.userMessage()) }
+                }
+            update { it.copy(isAddingAttachments = false) }
+        }
+    }
+
+    fun removeChatAttachment(id: String) {
+        if (transient.value.isSending) return
+        update { state ->
+            state.copy(chatAttachments = state.chatAttachments.filterNot { it.id == id })
         }
     }
 
@@ -180,6 +233,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         weeklyAdvice = null,
                         apiKeyConfigured = false,
+                        chatAttachments = emptyList(),
                         message = "端末内データを削除しました",
                     )
                 }

@@ -1,5 +1,8 @@
 package com.master.healthcoach.ui
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -28,12 +31,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShowChart
@@ -120,6 +127,8 @@ fun HealthCoachRoot(
     onSaveApiKey: (String, String) -> Unit,
     onClearApiKey: () -> Unit,
     onSendChat: (String) -> Unit,
+    onAddChatAttachments: (List<Uri>) -> Unit,
+    onRemoveChatAttachment: (String) -> Unit,
     onAnalyzeWeek: () -> Unit,
     onClearLocalData: () -> Unit,
     onMessageShown: () -> Unit,
@@ -180,7 +189,12 @@ fun HealthCoachRoot(
                     AppTab.TODAY -> DashboardScreen(state, onSync)
                     AppTab.TRENDS -> TrendsScreen(state)
                     AppTab.WEEKLY -> WeeklyScreen(state, onAnalyzeWeek)
-                    AppTab.CHAT -> ChatScreen(state, onSendChat)
+                    AppTab.CHAT -> ChatScreen(
+                        state = state,
+                        onSendChat = onSendChat,
+                        onAddAttachments = onAddChatAttachments,
+                        onRemoveAttachment = onRemoveChatAttachment,
+                    )
                     AppTab.SETTINGS -> SettingsScreen(
                         state = state,
                         onSaveGoal = onSaveGoal,
@@ -1276,9 +1290,18 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
 }
 
 @Composable
-private fun ChatScreen(state: MainUiState, onSendChat: (String) -> Unit) {
+private fun ChatScreen(
+    state: MainUiState,
+    onSendChat: (String) -> Unit,
+    onAddAttachments: (List<Uri>) -> Unit,
+    onRemoveAttachment: (String) -> Unit,
+) {
     var input by rememberSaveable { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val attachmentPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+        onResult = onAddAttachments,
+    )
     LaunchedEffect(state.messages.size) {
         if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.lastIndex)
     }
@@ -1320,7 +1343,27 @@ private fun ChatScreen(state: MainUiState, onSendChat: (String) -> Unit) {
                             )
                             .padding(14.dp),
                     ) {
-                        Text(message.content)
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(message.content)
+                            message.attachmentNames
+                                ?.lineSequence()
+                                ?.filter(String::isNotBlank)
+                                ?.forEach { name ->
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            Icons.Default.AttachFile,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                        Spacer(Modifier.width(5.dp))
+                                        Text(
+                                            name,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
+                        }
                     }
                 }
             }
@@ -1334,16 +1377,88 @@ private fun ChatScreen(state: MainUiState, onSendChat: (String) -> Unit) {
                 }
             }
         }
+        if (state.chatAttachments.isNotEmpty()) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                state.chatAttachments.forEach { attachment ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(start = 10.dp, top = 5.dp, bottom = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            if (attachment.mimeType.startsWith("image/")) {
+                                Icons.Default.Image
+                            } else {
+                                Icons.Default.Description
+                            },
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                attachment.displayName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                            )
+                            Text(
+                                attachment.sizeBytes.asFileSize(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        IconButton(
+                            onClick = { onRemoveAttachment(attachment.id) },
+                            enabled = !state.isSending,
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = "添付を外す")
+                        }
+                    }
+                }
+                Text(
+                    "最大4件・合計12MB。内容は今回の送信時だけGeminiへ渡し、端末には保存しません。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth().padding(10.dp),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            IconButton(
+                onClick = {
+                    attachmentPicker.launch(
+                        arrayOf(
+                            "image/*",
+                            "application/pdf",
+                            "text/*",
+                            "application/json",
+                        ),
+                    )
+                },
+                enabled = state.apiKeyConfigured &&
+                    !state.isSending &&
+                    !state.isAddingAttachments,
+            ) {
+                if (state.isAddingAttachments) {
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Default.AttachFile, contentDescription = "写真やファイルを添付")
+                }
+            }
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("健康データについて質問") },
+                placeholder = { Text("質問を入力（添付だけでも送信可）") },
                 maxLines = 4,
             )
             Button(
@@ -1351,7 +1466,10 @@ private fun ChatScreen(state: MainUiState, onSendChat: (String) -> Unit) {
                     onSendChat(input)
                     input = ""
                 },
-                enabled = input.isNotBlank() && state.apiKeyConfigured && !state.isSending,
+                enabled = (input.isNotBlank() || state.chatAttachments.isNotEmpty()) &&
+                    state.apiKeyConfigured &&
+                    !state.isSending &&
+                    !state.isAddingAttachments,
             ) { Text("送信") }
         }
     }
@@ -1902,6 +2020,11 @@ private val TREND_DATE_FORMAT = DateTimeFormatter.ofPattern("M/d")
 private val TREND_DETAIL_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy/M/d (E)", Locale.JAPAN)
 
 private fun Long.asHoursMinutes(): String = "${this / 60}時間${this % 60}分"
+private fun Long.asFileSize(): String = when {
+    this < 1024 -> "$this B"
+    this < 1024 * 1024 -> "${DecimalFormat("0.#").format(this / 1024.0)} KB"
+    else -> "${DecimalFormat("0.#").format(this / (1024.0 * 1024.0))} MB"
+}
 private fun Double?.kg(): String = this?.let { "${DecimalFormat("0.0").format(it)} kg" } ?: "未取得"
 private fun Double?.clean(): String? = this?.let { DecimalFormat("0.##").format(it) }
 private fun signed(value: Double): String = if (value >= 0) "+${DecimalFormat("0.##").format(value)}" else DecimalFormat("0.##").format(value)

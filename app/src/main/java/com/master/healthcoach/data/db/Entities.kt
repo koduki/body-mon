@@ -89,6 +89,7 @@ data class ChatMessageEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val role: String,
     val content: String,
+    val attachmentNames: String? = null,
     val createdAtEpochMillis: Long,
 )
 

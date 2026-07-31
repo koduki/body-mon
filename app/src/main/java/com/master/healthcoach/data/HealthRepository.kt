@@ -99,10 +99,15 @@ class HealthRepository(
             to.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() - 1,
         )
 
-    suspend fun addMessage(role: String, content: String): Long = dao.insertMessage(
+    suspend fun addMessage(
+        role: String,
+        content: String,
+        attachmentNames: String? = null,
+    ): Long = dao.insertMessage(
         ChatMessageEntity(
             role = role,
             content = content,
+            attachmentNames = attachmentNames,
             createdAtEpochMillis = System.currentTimeMillis(),
         ),
     )

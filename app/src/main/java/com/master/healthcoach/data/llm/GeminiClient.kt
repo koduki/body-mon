@@ -1,6 +1,7 @@
 package com.master.healthcoach.data.llm
 
 import java.io.IOException
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,7 +23,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-data class GeminiTurn(val role: String, val text: String)
+data class GeminiTurn(
+    val role: String,
+    val text: String,
+    val attachments: List<ChatAttachment> = emptyList(),
+)
 
 data class GeminiFunctionCall(
     val name: String,
@@ -48,7 +53,7 @@ class GeminiClient(
         turns: List<GeminiTurn>,
         toolExecutor: suspend (GeminiFunctionCall) -> JsonElement,
     ): String {
-        val contents = turnsToContents(turns).toMutableList()
+        val contents = geminiContents(turns).toMutableList()
         var result = generate(apiKey, model, systemInstruction, contents, healthTools())
         var toolRounds = 0
         while (result.functionCalls.isNotEmpty() && toolRounds < MAX_TOOL_ROUNDS) {
@@ -87,7 +92,7 @@ class GeminiClient(
     ): String {
         val body = buildRequestBody(
             systemInstruction = systemInstruction,
-            contents = turnsToContents(listOf(GeminiTurn("user", prompt))),
+            contents = geminiContents(listOf(GeminiTurn("user", prompt))),
             tools = null,
             generationConfig = buildJsonObject {
                 put("responseMimeType", "application/json")
@@ -124,7 +129,7 @@ class GeminiClient(
             apiKey = apiKey,
             model = model,
             systemInstruction = "あなたは会話メモリーを安全に圧縮する編集者です。",
-            contents = turnsToContents(listOf(GeminiTurn("user", prompt))),
+            contents = geminiContents(listOf(GeminiTurn("user", prompt))),
             tools = null,
         )
         return result.text?.trim() ?: currentMemory.orEmpty()
@@ -206,13 +211,6 @@ class GeminiClient(
         put("contents", JsonArray(contents))
         tools?.let { put("tools", it) }
         generationConfig?.let { put("generationConfig", it) }
-    }
-
-    private fun turnsToContents(turns: List<GeminiTurn>): List<JsonObject> = turns.map {
-        buildJsonObject {
-            put("role", if (it.role == "assistant") "model" else "user")
-            put("parts", buildJsonArray { add(buildJsonObject { put("text", it.text) }) })
-        }
     }
 
     private fun healthTools() = buildJsonArray {
@@ -298,5 +296,33 @@ class GeminiClient(
     companion object {
         private const val MAX_TOOL_ROUNDS = 3
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+    }
+}
+
+internal fun geminiContents(turns: List<GeminiTurn>): List<JsonObject> = turns.map { turn ->
+    buildJsonObject {
+        put("role", if (turn.role == "assistant") "model" else "user")
+        put("parts", buildJsonArray {
+            val text = if (turn.attachments.isEmpty()) {
+                turn.text
+            } else {
+                buildString {
+                    append("添付ファイル: ")
+                    append(turn.attachments.joinToString { it.displayName })
+                    appendLine()
+                    appendLine()
+                    append(turn.text)
+                }
+            }
+            add(buildJsonObject { put("text", text) })
+            turn.attachments.forEach { attachment ->
+                add(buildJsonObject {
+                    put("inlineData", buildJsonObject {
+                        put("mimeType", attachment.mimeType)
+                        put("data", Base64.getEncoder().encodeToString(attachment.data))
+                    })
+                })
+            }
+        })
     }
 }
