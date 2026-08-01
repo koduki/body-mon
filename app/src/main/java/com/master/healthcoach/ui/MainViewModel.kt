@@ -269,7 +269,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             goal.weeklyExerciseSessions == null ||
                 goal.weeklyExerciseSessions in 0..7,
         ) {
-            "週の筋トレ日数は0〜7日の範囲で入力してください"
+            "週の朝トレ目標日数は0〜7日の範囲で入力してください"
         }
         require(
             goal.dailyActiveCaloriesKcal == null ||

@@ -27,7 +27,8 @@ class HealthChatCoordinatorPayloadTest {
             dataLimitations = emptyList(),
             weightLossRatePercentPerWeek = 0.5,
             fatMassTrendKgPerWeek = -0.2,
-            strengthAdherencePercent = 86,
+            morningRoutineMinutes = 30,
+            morningRoutineAdherencePercent = 86,
             sleepHeartRateAverageBpm = 58,
             dietStartDate = "2026-07-01",
         )
@@ -37,7 +38,8 @@ class HealthChatCoordinatorPayloadTest {
         assertTrue(payload.contains("\"weightChangeKg\":-0.3"))
         assertFalse(payload.contains("weightLossRatePercentPerWeek"))
         assertFalse(payload.contains("fatMassTrendKgPerWeek"))
-        assertFalse(payload.contains("strengthAdherencePercent"))
+        assertFalse(payload.contains("morningRoutineMinutes"))
+        assertFalse(payload.contains("morningRoutineAdherencePercent"))
         assertFalse(payload.contains("sleepHeartRateAverageBpm"))
         assertFalse(payload.contains("dietStartDate"))
         assertFalse(payload.contains("2026-07-01"))
@@ -64,6 +66,7 @@ class HealthChatCoordinatorPayloadTest {
         assertFalse(profile.contains("dietStartDate"))
         assertFalse(profile.contains("2026-07-01"))
         assertTrue(analysisGoal.contains("1日歩数=8000"))
+        assertTrue(analysisGoal.contains("週の朝トレ目標日数=7"))
         assertFalse(analysisGoal.contains("dietStartDate"))
         assertFalse(analysisGoal.contains("2026-07-01"))
     }

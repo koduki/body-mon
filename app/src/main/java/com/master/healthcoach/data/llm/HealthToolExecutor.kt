@@ -90,7 +90,12 @@ class HealthToolExecutor(private val repository: HealthRepository) {
             put("sessions", items.sumOf { it.exerciseSessionCount })
             put("minutes", items.sumOf { it.exerciseMinutes })
             put("strengthMinutes", items.sumOf { it.strengthMinutes })
+            put("morningRoutineMinutes", items.sumOf { it.morningRoutineMinutes })
             put("cardioMinutes", items.sumOf { it.cardioMinutes })
+            put(
+                "morningRoutineInterpretation",
+                "Other Workoutを朝の5分ルーティン（軽い筋トレ＋有酸素）として扱う",
+            )
             put("daily", buildJsonArray {
                 items.filter { it.exerciseSessionCount > 0 }.forEach { item ->
                     add(buildJsonObject {
@@ -98,6 +103,7 @@ class HealthToolExecutor(private val repository: HealthRepository) {
                         put("sessions", item.exerciseSessionCount)
                         put("minutes", item.exerciseMinutes)
                         put("strengthMinutes", item.strengthMinutes)
+                        put("morningRoutineMinutes", item.morningRoutineMinutes)
                         put("cardioMinutes", item.cardioMinutes)
                     })
                 }
@@ -235,7 +241,9 @@ class HealthToolExecutor(private val repository: HealthRepository) {
             number("targetFatMassKg", goal.targetFatMassKg)
             number("minimumLeanMassKg", goal.minimumLeanMassKg)
             goal.dailySteps?.let { put("dailySteps", it) }
-            goal.weeklyExerciseSessions?.let { put("weeklyExerciseSessions", it) }
+            goal.weeklyExerciseSessions?.let {
+                put("weeklyMorningRoutineTargetDays", it)
+            }
             number("dailyActiveCaloriesKcal", goal.dailyActiveCaloriesKcal)
             number("latestFatMassKg", latestBody?.fatMassKg)
             number("latestLeanBodyMassKg", latestBody?.leanBodyMassKg)

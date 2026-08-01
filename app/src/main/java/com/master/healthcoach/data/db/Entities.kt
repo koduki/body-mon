@@ -1,5 +1,6 @@
 package com.master.healthcoach.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -11,6 +12,7 @@ data class DailyHealthSummaryEntity(
     val activeCaloriesKcal: Double?,
     val exerciseMinutes: Long,
     val strengthMinutes: Long,
+    @ColumnInfo(defaultValue = "0") val morningRoutineMinutes: Long = 0,
     val cardioMinutes: Long,
     val exerciseSessionCount: Int,
     val sleepMinutes: Long?,

@@ -56,11 +56,13 @@ object WeeklyReportBuilder {
 
         val stepsAverage = averageLong(currentDaily.mapNotNull { it.steps })
         val previousStepsAverage = averageLong(previousDaily.mapNotNull { it.steps })
-        val strengthDays = currentDaily.count { it.strengthMinutes > 0 }
-        val previousStrengthDays = previousDaily.count { it.strengthMinutes > 0 }
-        val strengthTarget = (goal?.weeklyExerciseSessions ?: 7).coerceIn(0, 7)
-        val strengthAdherence = strengthTarget.takeIf { it > 0 }?.let {
-            (strengthDays * 100.0 / it).roundToInt()
+        val morningRoutineDays = currentDaily.count { it.morningRoutineMinutes > 0 }
+        val previousMorningRoutineDays = previousDaily.count {
+            it.morningRoutineMinutes > 0
+        }
+        val morningRoutineTarget = (goal?.weeklyExerciseSessions ?: 7).coerceIn(0, 7)
+        val morningRoutineAdherence = morningRoutineTarget.takeIf { it > 0 }?.let {
+            (morningRoutineDays * 100.0 / it).roundToInt()
         }
         val stepTargetHits = goal?.dailySteps?.let { target ->
             currentDaily.count { (it.steps ?: Long.MIN_VALUE) >= target }
@@ -213,10 +215,11 @@ object WeeklyReportBuilder {
             fatMassTrendKgPerWeek = fatMassTrend,
             leanMassTrendKgPerWeek = leanMassTrend,
             trendMeasurementDays = trendBody.size,
-            strengthTrainingDays = strengthDays,
-            previousWeekStrengthTrainingDays = previousStrengthDays,
-            strengthTargetDays = strengthTarget,
-            strengthAdherencePercent = strengthAdherence,
+            morningRoutineMinutes = currentDaily.sumOf { it.morningRoutineMinutes },
+            morningRoutineDays = morningRoutineDays,
+            previousWeekMorningRoutineDays = previousMorningRoutineDays,
+            morningRoutineTargetDays = morningRoutineTarget,
+            morningRoutineAdherencePercent = morningRoutineAdherence,
             stepsTargetHitDays = stepTargetHits,
             stepsBaselinePercent = stepsBaselinePercent,
             moderateEquivalentMinutes = currentMvpaEquivalent,

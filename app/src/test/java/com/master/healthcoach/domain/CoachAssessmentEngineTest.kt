@@ -13,8 +13,8 @@ class CoachAssessmentEngineTest {
                 weightLossRate = 0.5,
                 fatTrend = -0.3,
                 leanTrend = 0.0,
-                strengthDays = 6,
-                strengthAdherence = 86,
+                routineDays = 6,
+                routineAdherence = 86,
                 stepsBaseline = 102,
                 sleepTargetDays = 5,
             ),
@@ -24,7 +24,7 @@ class CoachAssessmentEngineTest {
         assertEquals("high", assessment.confidence)
         assertTrue(assessment.signals.any { it.code == "LOSS_RATE_ON_TARGET" })
         assertTrue(assessment.signals.any { it.code == "BODY_RECOMPOSITION_DIRECTION" })
-        assertTrue(assessment.signals.any { it.code == "STRENGTH_HABIT_ON_TRACK" })
+        assertTrue(assessment.signals.any { it.code == "MORNING_ROUTINE_ON_TRACK" })
         assertTrue(assessment.nextActions.isEmpty())
     }
 
@@ -35,8 +35,8 @@ class CoachAssessmentEngineTest {
                 weightLossRate = 0.9,
                 fatTrend = -0.5,
                 leanTrend = -0.3,
-                strengthDays = 3,
-                strengthAdherence = 43,
+                routineDays = 3,
+                routineAdherence = 43,
                 stepsBaseline = 80,
                 sleepTargetDays = 2,
             ),
@@ -46,7 +46,7 @@ class CoachAssessmentEngineTest {
         assertEquals(2, assessment.nextActions.size)
         assertTrue(assessment.nextActions[0].contains("減量をさらに強めず"))
         assertTrue(assessment.nextActions[1].contains("次回パーソナル"))
-        assertTrue(assessment.signals.any { it.code == "STRENGTH_ADHERENCE_LOW" })
+        assertTrue(assessment.signals.any { it.code == "MORNING_ROUTINE_ADHERENCE_LOW" })
     }
 
     @Test
@@ -56,8 +56,8 @@ class CoachAssessmentEngineTest {
                 weightLossRate = 0.5,
                 fatTrend = -0.2,
                 leanTrend = 0.0,
-                strengthDays = 6,
-                strengthAdherence = 86,
+                routineDays = 6,
+                routineAdherence = 86,
                 stepsBaseline = 100,
                 sleepTargetDays = 5,
                 measurementConsistency = 50,
@@ -77,8 +77,8 @@ class CoachAssessmentEngineTest {
                 weightLossRate = null,
                 fatTrend = null,
                 leanTrend = null,
-                strengthDays = 0,
-                strengthAdherence = null,
+                routineDays = 0,
+                routineAdherence = null,
                 stepsBaseline = null,
                 sleepTargetDays = null,
                 trendDays = 0,
@@ -98,8 +98,8 @@ class CoachAssessmentEngineTest {
                 weightLossRate = 0.9,
                 fatTrend = -0.5,
                 leanTrend = -0.3,
-                strengthDays = 3,
-                strengthAdherence = 43,
+                routineDays = 3,
+                routineAdherence = 43,
                 stepsBaseline = 80,
                 sleepTargetDays = 2,
             ),
@@ -126,8 +126,8 @@ class CoachAssessmentEngineTest {
         weightLossRate: Double?,
         fatTrend: Double?,
         leanTrend: Double?,
-        strengthDays: Int,
-        strengthAdherence: Int?,
+        routineDays: Int,
+        routineAdherence: Int?,
         stepsBaseline: Int?,
         sleepTargetDays: Int?,
         measurementConsistency: Int = 100,
@@ -142,10 +142,10 @@ class CoachAssessmentEngineTest {
         bodyMeasurementDays = bodyDays,
         stepsDailyAverage = 8_000,
         activeCaloriesDailyAverage = 400.0,
-        exerciseSessions = strengthDays,
-        exerciseMinutes = strengthDays * 10L,
-        strengthMinutes = strengthDays * 10L,
-        cardioMinutes = 0,
+        exerciseSessions = routineDays,
+        exerciseMinutes = routineDays * 5L,
+        strengthMinutes = 0,
+        cardioMinutes = routineDays * 5L,
         previousWeekStepsDailyAverage = 8_000,
         previousWeekActiveCaloriesDailyAverage = 400.0,
         dataLimitations = emptyList(),
@@ -155,9 +155,10 @@ class CoachAssessmentEngineTest {
         fatMassTrendKgPerWeek = fatTrend,
         leanMassTrendKgPerWeek = leanTrend,
         trendMeasurementDays = trendDays,
-        strengthTrainingDays = strengthDays,
-        strengthTargetDays = 7,
-        strengthAdherencePercent = strengthAdherence,
+        morningRoutineMinutes = routineDays * 5L,
+        morningRoutineDays = routineDays,
+        morningRoutineTargetDays = 7,
+        morningRoutineAdherencePercent = routineAdherence,
         stepsBaselinePercent = stepsBaseline,
         sleepTargetHitDays = sleepTargetDays,
         sleepHeartRateBaselineDeltaBpm = 0,

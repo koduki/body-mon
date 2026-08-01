@@ -218,7 +218,12 @@ class GeminiClient(
             put("functionDeclarations", buildJsonArray {
                 add(function("get_body_composition", "指定期間の体重、脂肪量、除脂肪量を取得します"))
                 add(function("get_activity_summary", "指定期間の歩数、距離、活動消費を取得します"))
-                add(function("get_exercise_summary", "指定期間の運動回数と運動時間を取得します"))
+                add(
+                    function(
+                        "get_exercise_summary",
+                        "指定期間の運動回数、運動時間、朝の5分ルーティンを取得します",
+                    ),
+                )
                 add(function("get_sleep_summary", "指定期間の睡眠時間を取得します"))
                 add(function("get_heart_rate_summary", "指定期間の心拍数を取得します"))
                 add(function("get_activity_intensity_summary", "指定期間の中強度・高強度活動時間を取得します"))

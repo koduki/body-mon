@@ -159,7 +159,7 @@ internal fun GoalEntity.existingAiProfile(): String =
 
 internal fun GoalEntity.existingAiGoal(): String =
     "${existingAiProfile()}, 1日歩数=$dailySteps, " +
-        "週の筋トレ日数=$weeklyExerciseSessions, " +
+        "週の朝トレ目標日数=$weeklyExerciseSessions, " +
         "参考活動消費=${dailyActiveCaloriesKcal}kcal"
 
 /**
