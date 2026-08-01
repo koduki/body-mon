@@ -55,6 +55,8 @@ class MainActivity : ComponentActivity() {
                     onSaveApiKey = viewModel::saveApiKey,
                     onClearApiKey = viewModel::clearApiKey,
                     onSendChat = viewModel::sendChat,
+                    onAddChatAttachments = viewModel::addChatAttachments,
+                    onRemoveChatAttachment = viewModel::removeChatAttachment,
                     onAnalyzeWeek = viewModel::analyzeWeek,
                     onClearLocalData = viewModel::clearLocalData,
                     onMessageShown = viewModel::consumeMessage,

@@ -1,6 +1,7 @@
 package com.master.healthcoach.data.llm
 
 import java.io.IOException
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,7 +23,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
-data class GeminiTurn(val role: String, val text: String)
+data class GeminiTurn(
+    val role: String,
+    val text: String,
+    val attachments: List<ChatAttachment> = emptyList(),
+)
 
 data class GeminiFunctionCall(
     val name: String,
@@ -48,7 +53,7 @@ class GeminiClient(
         turns: List<GeminiTurn>,
         toolExecutor: suspend (GeminiFunctionCall) -> JsonElement,
     ): String {
-        val contents = turnsToContents(turns).toMutableList()
+        val contents = geminiContents(turns).toMutableList()
         var result = generate(apiKey, model, systemInstruction, contents, healthTools())
         var toolRounds = 0
         while (result.functionCalls.isNotEmpty() && toolRounds < MAX_TOOL_ROUNDS) {
@@ -87,7 +92,7 @@ class GeminiClient(
     ): String {
         val body = buildRequestBody(
             systemInstruction = systemInstruction,
-            contents = turnsToContents(listOf(GeminiTurn("user", prompt))),
+            contents = geminiContents(listOf(GeminiTurn("user", prompt))),
             tools = null,
             generationConfig = buildJsonObject {
                 put("responseMimeType", "application/json")
@@ -124,7 +129,7 @@ class GeminiClient(
             apiKey = apiKey,
             model = model,
             systemInstruction = "あなたは会話メモリーを安全に圧縮する編集者です。",
-            contents = turnsToContents(listOf(GeminiTurn("user", prompt))),
+            contents = geminiContents(listOf(GeminiTurn("user", prompt))),
             tools = null,
         )
         return result.text?.trim() ?: currentMemory.orEmpty()
@@ -208,19 +213,17 @@ class GeminiClient(
         generationConfig?.let { put("generationConfig", it) }
     }
 
-    private fun turnsToContents(turns: List<GeminiTurn>): List<JsonObject> = turns.map {
-        buildJsonObject {
-            put("role", if (it.role == "assistant") "model" else "user")
-            put("parts", buildJsonArray { add(buildJsonObject { put("text", it.text) }) })
-        }
-    }
-
     private fun healthTools() = buildJsonArray {
         add(buildJsonObject {
             put("functionDeclarations", buildJsonArray {
                 add(function("get_body_composition", "指定期間の体重、脂肪量、除脂肪量を取得します"))
                 add(function("get_activity_summary", "指定期間の歩数、距離、活動消費を取得します"))
-                add(function("get_exercise_summary", "指定期間の運動回数と運動時間を取得します"))
+                add(
+                    function(
+                        "get_exercise_summary",
+                        "指定期間の運動回数、運動時間、朝の5分ルーティンを取得します",
+                    ),
+                )
                 add(function("get_sleep_summary", "指定期間の睡眠時間を取得します"))
                 add(function("get_heart_rate_summary", "指定期間の心拍数を取得します"))
                 add(function("get_activity_intensity_summary", "指定期間の中強度・高強度活動時間を取得します"))
@@ -298,5 +301,33 @@ class GeminiClient(
     companion object {
         private const val MAX_TOOL_ROUNDS = 3
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+    }
+}
+
+internal fun geminiContents(turns: List<GeminiTurn>): List<JsonObject> = turns.map { turn ->
+    buildJsonObject {
+        put("role", if (turn.role == "assistant") "model" else "user")
+        put("parts", buildJsonArray {
+            val text = if (turn.attachments.isEmpty()) {
+                turn.text
+            } else {
+                buildString {
+                    append("添付ファイル: ")
+                    append(turn.attachments.joinToString { it.displayName })
+                    appendLine()
+                    appendLine()
+                    append(turn.text)
+                }
+            }
+            add(buildJsonObject { put("text", text) })
+            turn.attachments.forEach { attachment ->
+                add(buildJsonObject {
+                    put("inlineData", buildJsonObject {
+                        put("mimeType", attachment.mimeType)
+                        put("data", Base64.getEncoder().encodeToString(attachment.data))
+                    })
+                })
+            }
+        })
     }
 }

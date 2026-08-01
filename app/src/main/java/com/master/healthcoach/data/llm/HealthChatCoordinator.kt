@@ -24,13 +24,30 @@ class HealthChatCoordinator(
 ) {
     private val tools = HealthToolExecutor(repository)
 
-    suspend fun sendMessage(message: String): String {
+    suspend fun sendMessage(
+        message: String,
+        attachments: List<ChatAttachment> = emptyList(),
+    ): String {
+        require(message.isNotBlank() || attachments.isNotEmpty()) {
+            "メッセージか添付ファイルを入力してください"
+        }
         val apiKey = apiKeyStore.load() ?: error("設定画面でGemini APIキーを保存してください")
-        repository.addMessage("user", message.trim())
+        val userText = message.trim().ifBlank { DEFAULT_ATTACHMENT_PROMPT }
+        val messageId = repository.addMessage(
+            role = "user",
+            content = userText,
+            attachmentNames = attachments
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString("\n") { it.displayName },
+        )
         val memory = repository.getMemory()?.summary
         val goal = repository.getGoal()
-        val recent = repository.getRecentMessages(CONTEXT_MESSAGE_LIMIT).map {
-            GeminiTurn(it.role, it.content)
+        val recent = repository.getRecentMessages(CONTEXT_MESSAGE_LIMIT).map { messageEntity ->
+            GeminiTurn(
+                role = messageEntity.role,
+                text = messageEntity.content,
+                attachments = if (messageEntity.id == messageId) attachments else emptyList(),
+            )
         }
         val modelAnswer = gemini.chatWithTools(
             apiKey = apiKey,
@@ -113,6 +130,9 @@ class HealthChatCoordinator(
         データ不足時は限界を明示し、行動案は最大2つに絞ります。
         会話メモリーは利用者が話した確認済みの習慣・制約です。数値との因果関係を
         推測せず、関連を述べる場合は観測事実と仮説を分けてください。
+        添付された画像・文書は利用者がこのターンで明示的に送ったものだけを確認してください。
+        画像から食品の量、栄養素、カロリーを正確に断定せず、読み取れた事実と推定を分けてください。
+        文書に医療情報が含まれる場合も、診断や治療判断ではなく内容の整理と受診時の質問作りに留めます。
 
         ボディメイク専門コーチ方針:
         ${BodyRecompositionCoachPolicy.systemInstruction}
@@ -127,6 +147,8 @@ class HealthChatCoordinator(
     companion object {
         private const val CONTEXT_MESSAGE_LIMIT = 20
         private const val HABIT_REFRESH_USER_MESSAGES = 6
+        private const val DEFAULT_ATTACHMENT_PROMPT =
+            "添付ファイルの内容を確認し、健康コーチとして重要な点を説明してください。"
     }
 }
 
@@ -137,7 +159,7 @@ internal fun GoalEntity.existingAiProfile(): String =
 
 internal fun GoalEntity.existingAiGoal(): String =
     "${existingAiProfile()}, 1日歩数=$dailySteps, " +
-        "週の筋トレ日数=$weeklyExerciseSessions, " +
+        "週の朝トレ目標日数=$weeklyExerciseSessions, " +
         "参考活動消費=${dailyActiveCaloriesKcal}kcal"
 
 /**

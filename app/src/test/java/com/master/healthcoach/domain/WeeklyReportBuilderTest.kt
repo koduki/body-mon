@@ -25,7 +25,7 @@ class WeeklyReportBuilderTest {
                     daysAgo <= 21 -> 6_000
                     else -> 7_000
                 },
-                strengthMinutes = if (daysAgo <= 6 && daysAgo != 3L) 10 else 0,
+                morningRoutineMinutes = if (daysAgo <= 6 && daysAgo != 3L) 5 else 0,
                 sleepHeartRate = if (daysAgo <= 6) 70 else 68,
             )
         }
@@ -54,8 +54,9 @@ class WeeklyReportBuilderTest {
         assertEquals(-0.56, report.fatMassTrendKgPerWeek!!, 0.001)
         assertEquals(-0.14, report.leanMassTrendKgPerWeek!!, 0.001)
         assertEquals(0.872, report.weightLossRatePercentPerWeek!!, 0.001)
-        assertEquals(6, report.strengthTrainingDays)
-        assertEquals(86, report.strengthAdherencePercent)
+        assertEquals(6, report.morningRoutineDays)
+        assertEquals(30L, report.morningRoutineMinutes)
+        assertEquals(86, report.morningRoutineAdherencePercent)
         assertEquals(7, report.stepsTargetHitDays)
         assertEquals(114, report.stepsBaselinePercent)
         assertEquals(210L, report.moderateEquivalentMinutes)
@@ -101,20 +102,50 @@ class WeeklyReportBuilderTest {
         assertTrue(report.dataLimitations.size >= 4)
     }
 
+    @Test
+    fun `counts morning routine days instead of ordinary strength sessions`() {
+        val today = LocalDate.of(2026, 7, 30)
+        val daily = listOf(
+            daily(
+                date = today,
+                strengthMinutes = 30,
+                morningRoutineMinutes = 0,
+            ),
+            daily(
+                date = today.minusDays(1),
+                strengthMinutes = 0,
+                morningRoutineMinutes = 5,
+            ),
+        )
+
+        val report = WeeklyReportBuilder.build(
+            today = today,
+            daily = daily,
+            body = emptyList(),
+            zoneId = zoneId,
+        )
+
+        assertEquals(1, report.morningRoutineDays)
+        assertEquals(5L, report.morningRoutineMinutes)
+        assertEquals(30L, report.strengthMinutes)
+    }
+
     private fun daily(
         date: LocalDate,
         steps: Long = 8_000,
-        strengthMinutes: Long = 10,
+        strengthMinutes: Long = 0,
+        morningRoutineMinutes: Long = 5,
         sleepHeartRate: Long = 68,
     ) = DailyHealthSummaryEntity(
         date = date.toString(),
         steps = steps,
         distanceMeters = 5_000.0,
         activeCaloriesKcal = 450.0,
-        exerciseMinutes = strengthMinutes,
+        exerciseMinutes = strengthMinutes + morningRoutineMinutes,
         strengthMinutes = strengthMinutes,
-        cardioMinutes = 0,
-        exerciseSessionCount = if (strengthMinutes > 0) 1 else 0,
+        morningRoutineMinutes = morningRoutineMinutes,
+        cardioMinutes = morningRoutineMinutes,
+        exerciseSessionCount = if (strengthMinutes + morningRoutineMinutes > 0) 1 else 0,
         sleepMinutes = 450,
         sleepStartEpochMillis = date.minusDays(1).atTime(23, 0)
             .atZone(zoneId).toInstant().toEpochMilli(),

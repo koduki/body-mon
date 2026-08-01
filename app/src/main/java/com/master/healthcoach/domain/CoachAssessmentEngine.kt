@@ -43,14 +43,14 @@ object CoachAssessmentEngine {
             addMeasurementQualitySignal(snapshot)
             addWeightLossRateSignal(snapshot)
             addBodyCompositionSignal(snapshot)
-            addStrengthSignal(snapshot)
+            addMorningRoutineSignal(snapshot)
             addRecoverySignal(snapshot)
             addActivitySignal(snapshot)
         }
         val limitations = buildList<String> {
             addAll(snapshot.dataLimitations)
             add(
-                "運動日数だけでは筋力維持そのものを判定できません。" +
+                "朝トレの実施日数だけでは筋力維持そのものを判定できません。" +
                     "月1回のパーソナルで同じ種目の重量・回数を確認してください",
             )
         }.distinct()
@@ -177,28 +177,30 @@ object CoachAssessmentEngine {
         }
     }
 
-    private fun MutableList<CoachSignal>.addStrengthSignal(
+    private fun MutableList<CoachSignal>.addMorningRoutineSignal(
         snapshot: WeeklySnapshot,
     ) {
-        val adherence = snapshot.strengthAdherencePercent ?: return
+        val adherence = snapshot.morningRoutineAdherencePercent ?: return
         when {
-            adherence >= BodyRecompositionCoachPolicy.STRENGTH_ADHERENCE_GOOD_PERCENT -> add(
+            adherence >= BodyRecompositionCoachPolicy.ROUTINE_ADHERENCE_GOOD_PERCENT -> add(
                 CoachSignal(
-                    code = "STRENGTH_HABIT_ON_TRACK",
+                    code = "MORNING_ROUTINE_ON_TRACK",
                     level = CoachSignalLevel.POSITIVE,
                     title = "朝トレ習慣は維持",
-                    evidence = "${snapshot.strengthTrainingDays}/${snapshot.strengthTargetDays}日、" +
+                    evidence = "${snapshot.morningRoutineDays}/" +
+                        "${snapshot.morningRoutineTargetDays}日、" +
                         "継続率$adherence%です",
                     priority = 50,
                 ),
             )
 
-            adherence < BodyRecompositionCoachPolicy.STRENGTH_ADHERENCE_CAUTION_PERCENT -> add(
+            adherence < BodyRecompositionCoachPolicy.ROUTINE_ADHERENCE_CAUTION_PERCENT -> add(
                 CoachSignal(
-                    code = "STRENGTH_ADHERENCE_LOW",
+                    code = "MORNING_ROUTINE_ADHERENCE_LOW",
                     level = CoachSignalLevel.CAUTION,
                     title = "朝トレ継続を立て直す",
-                    evidence = "${snapshot.strengthTrainingDays}/${snapshot.strengthTargetDays}日、" +
+                    evidence = "${snapshot.morningRoutineDays}/" +
+                        "${snapshot.morningRoutineTargetDays}日、" +
                         "継続率$adherence%です",
                     action = "朝トレは負荷を増やすより、短い最低メニューで実施日を戻す",
                     priority = 80,
@@ -207,10 +209,11 @@ object CoachAssessmentEngine {
 
             else -> add(
                 CoachSignal(
-                    code = "STRENGTH_HABIT_WATCH",
+                    code = "MORNING_ROUTINE_WATCH",
                     level = CoachSignalLevel.INFORMATION,
                     title = "朝トレ習慣はおおむね維持",
-                    evidence = "${snapshot.strengthTrainingDays}/${snapshot.strengthTargetDays}日、" +
+                    evidence = "${snapshot.morningRoutineDays}/" +
+                        "${snapshot.morningRoutineTargetDays}日、" +
                         "継続率$adherence%です",
                     priority = 45,
                 ),
@@ -303,7 +306,7 @@ object CoachAssessmentEngine {
         val codes = signals.map { it.code }.toSet()
         return when {
             "LOSS_RATE_FAST" in codes ||
-                "STRENGTH_ADHERENCE_LOW" in codes ||
+                "MORNING_ROUTINE_ADHERENCE_LOW" in codes ||
                 (
                     "LEAN_TREND_DOWN" in codes &&
                         (snapshot.weightLossRatePercentPerWeek ?: 0.0) >
@@ -317,12 +320,15 @@ object CoachAssessmentEngine {
         }
     }
 
-    private fun confidence(snapshot: WeeklySnapshot): String = when {
-        snapshot.weightLossRatePercentPerWeek == null -> "low"
-        (snapshot.measurementTimeConsistencyPercent ?: 100) <
-            BodyRecompositionCoachPolicy.MIN_MEASUREMENT_CONSISTENCY_PERCENT -> "low"
-        snapshot.trendMeasurementDays >= 14 && snapshot.bodyMeasurementDays >= 5 -> "high"
-        else -> "medium"
+    private fun confidence(snapshot: WeeklySnapshot): String {
+        val measurementConsistency = snapshot.measurementTimeConsistencyPercent ?: 100
+        return when {
+            snapshot.weightLossRatePercentPerWeek == null -> "low"
+            measurementConsistency <
+                BodyRecompositionCoachPolicy.MIN_MEASUREMENT_CONSISTENCY_PERCENT -> "low"
+            snapshot.trendMeasurementDays >= 14 && snapshot.bodyMeasurementDays >= 5 -> "high"
+            else -> "medium"
+        }
     }
 
     private fun Double.percent(): String = String.format(Locale.ROOT, "%.2f", this)
@@ -332,13 +338,13 @@ object CoachAssessmentEngine {
 }
 
 object BodyRecompositionCoachPolicy {
-    const val VERSION = "2026-07-31"
+    const val VERSION = "2026-08-01"
     const val MAX_ACTIONS = 2
     const val TARGET_LOSS_RATE_MIN_PERCENT = 0.3
     const val TARGET_LOSS_RATE_MAX_PERCENT = 0.7
     const val LEAN_TREND_CAUTION_KG_PER_WEEK = -0.20
-    const val STRENGTH_ADHERENCE_GOOD_PERCENT = 80
-    const val STRENGTH_ADHERENCE_CAUTION_PERCENT = 70
+    const val ROUTINE_ADHERENCE_GOOD_PERCENT = 80
+    const val ROUTINE_ADHERENCE_CAUTION_PERCENT = 70
     const val STEPS_BASELINE_CAUTION_PERCENT = 90
     const val MIN_MEASUREMENT_CONSISTENCY_PERCENT = 70
     const val MIN_SLEEP_MEASUREMENT_DAYS = 5
@@ -350,8 +356,10 @@ object BodyRecompositionCoachPolicy {
         専門家としての優先順位は、体重を速く落とすことではなく、筋力と回復を守りながら
         脂肪を減らすことです。観測事実、解釈、提案を混同しないでください。
         0.3〜0.7%体重/週はこのアプリの保守的な運用目安で、医学的な普遍閾値ではありません。
-        日々の軽い朝トレは習慣KPIとして扱い、筋力維持の証明にはしません。筋力は月1回の
-        パーソナルで同じ種目の重量・回数を比較して確認するよう案内してください。
+        Health Connectの「その他のワークアウト」は、朝の5分ルーティンとして扱います。
+        軽い筋トレと有酸素運動の両方として評価しますが、実施日数は筋トレ日数ではなく
+        朝トレ習慣KPIに使い、筋力維持の証明にはしません。筋力は月1回のパーソナルで
+        同じ種目の重量・回数を比較して確認するよう案内してください。
         BIA由来の脂肪量・除脂肪量は28日傾向でも補助シグナルに限定し、筋肉増減を断定しません。
         活動消費カロリーや基礎代謝から、摂取量やカロリー赤字を逆算しません。
         データが不足・矛盾する場合は結論を保留し、追加で確認すべき情報を示してください。
