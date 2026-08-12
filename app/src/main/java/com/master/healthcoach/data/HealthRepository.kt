@@ -12,9 +12,11 @@ import com.master.healthcoach.data.db.HealthSourceStatusEntity
 import com.master.healthcoach.data.db.WeeklyReportEntity
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.data.health.HealthConnectGateway
+import com.master.healthcoach.data.llm.ChatHistoryPolicy
 import com.master.healthcoach.domain.WeeklyReportBuilder
 import java.time.LocalDate
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -31,7 +33,10 @@ class HealthRepository(
     val exerciseSessions: Flow<List<ExerciseSessionEntity>> = dao.observeExerciseSessions()
     val goal: Flow<GoalEntity?> = dao.observeGoal()
     val latestWeekly: Flow<WeeklyReportEntity?> = dao.observeLatestWeekly()
-    val messages: Flow<List<ChatMessageEntity>> = dao.observeMessages()
+    val messages: Flow<List<ChatMessageEntity>> =
+        dao.observeRecentMessages(ChatHistoryPolicy.CONTEXT_MESSAGE_LIMIT)
+            .map { rows -> rows.sortedBy { it.id } }
+    val memory: Flow<ConversationMemoryEntity?> = dao.observeMemory()
 
     fun availability(): HealthConnectAvailability = gateway.availability()
     fun corePermissions(): Set<String> = gateway.corePermissions
@@ -112,7 +117,9 @@ class HealthRepository(
         ),
     )
 
-    suspend fun getRecentMessages(limit: Int = 20): List<ChatMessageEntity> =
+    suspend fun getRecentMessages(
+        limit: Int = ChatHistoryPolicy.CONTEXT_MESSAGE_LIMIT,
+    ): List<ChatMessageEntity> =
         dao.getRecentMessages(limit).sortedBy { it.id }
 
     suspend fun getMessagesAfter(afterId: Long): List<ChatMessageEntity> =
@@ -120,13 +127,32 @@ class HealthRepository(
 
     suspend fun messageCount(): Int = dao.messageCount()
     suspend fun getMemory(): ConversationMemoryEntity? = dao.getMemory()
-    suspend fun saveMemory(summary: String, throughId: Long) = dao.upsertMemory(
-        ConversationMemoryEntity(
-            summary = summary,
-            summarizedThroughMessageId = throughId,
-            updatedAtEpochMillis = System.currentTimeMillis(),
-        ),
-    )
+    suspend fun saveMemory(summary: String, throughId: Long) {
+        dao.upsertMemory(
+            ConversationMemoryEntity(
+                summary = summary,
+                summarizedThroughMessageId = throughId,
+                updatedAtEpochMillis = System.currentTimeMillis(),
+            ),
+        )
+        pruneChatHistory()
+    }
+
+    /**
+     * Drops summarized turns outside the shared recent window so the chat screen
+     * and Room stay aligned with the Gemini context budget.
+     */
+    suspend fun pruneChatHistory(
+        keepRecent: Int = ChatHistoryPolicy.CONTEXT_MESSAGE_LIMIT,
+    ) {
+        val memory = dao.getMemory() ?: return
+        val maxDeletable = ChatHistoryPolicy.maxDeletableMessageId(
+            messageIdsAscending = dao.getMessageIds(),
+            summarizedThroughMessageId = memory.summarizedThroughMessageId,
+            keepRecent = keepRecent,
+        ) ?: return
+        dao.deleteMessagesUpTo(maxDeletable)
+    }
 
     suspend fun clearAll() {
         database.withTransaction {

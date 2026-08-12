@@ -74,17 +74,26 @@ interface HealthCoachDao {
     )
     suspend fun deleteExerciseSessionsInRange(from: Long, toExclusive: Long)
 
-    @Query("SELECT * FROM chat_messages ORDER BY id")
-    fun observeMessages(): Flow<List<ChatMessageEntity>>
+    @Query("SELECT * FROM chat_messages ORDER BY id DESC LIMIT :limit")
+    fun observeRecentMessages(limit: Int): Flow<List<ChatMessageEntity>>
 
     @Query("SELECT * FROM chat_messages ORDER BY id DESC LIMIT :limit")
     suspend fun getRecentMessages(limit: Int): List<ChatMessageEntity>
 
+    @Query("SELECT id FROM chat_messages ORDER BY id")
+    suspend fun getMessageIds(): List<Long>
+
     @Query("SELECT * FROM chat_messages WHERE id > :afterId ORDER BY id")
     suspend fun getMessagesAfter(afterId: Long): List<ChatMessageEntity>
 
+    @Query("DELETE FROM chat_messages WHERE id <= :maxId")
+    suspend fun deleteMessagesUpTo(maxId: Long)
+
     @Query("SELECT COUNT(*) FROM chat_messages")
     suspend fun messageCount(): Int
+
+    @Query("SELECT * FROM conversation_memory WHERE id = 1")
+    fun observeMemory(): Flow<ConversationMemoryEntity?>
 
     @Query("SELECT * FROM conversation_memory WHERE id = 1")
     suspend fun getMemory(): ConversationMemoryEntity?
