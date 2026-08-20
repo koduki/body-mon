@@ -30,6 +30,7 @@ data class DailyHealthSummaryEntity(
     val proteinGrams: Double? = null,
     val totalFatGrams: Double? = null,
     val carbohydrateGrams: Double? = null,
+    @ColumnInfo(defaultValue = "0") val mealCount: Int = 0,
     val dataOrigins: String,
     val updatedAtEpochMillis: Long,
 )
@@ -73,6 +74,22 @@ data class ExerciseSessionEntity(
     val exerciseLabel: String,
     val category: String,
     val durationMinutes: Long,
+    val dataOrigin: String,
+)
+
+@Entity(tableName = "nutrition_meals")
+data class NutritionMealEntity(
+    @PrimaryKey val recordId: String,
+    val date: String,
+    val startEpochMillis: Long,
+    val endEpochMillis: Long,
+    val mealLabel: String,
+    val mealType: Int,
+    val intakeCaloriesKcal: Double?,
+    val proteinGrams: Double?,
+    val totalFatGrams: Double?,
+    val carbohydrateGrams: Double?,
+    val recordCount: Int,
     val dataOrigin: String,
 )
 

@@ -78,6 +78,7 @@ data class WeeklySnapshot(
     val proteinEnergyPercent: Double? = null,
     val fatEnergyPercent: Double? = null,
     val carbohydrateEnergyPercent: Double? = null,
+    val mealCountDailyAverage: Double? = null,
 )
 
 @Serializable

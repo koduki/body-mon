@@ -48,6 +48,8 @@ Health Connectの運動種別が`Other Workout`のセッションだけを、本
   として起床日に割り当てる。
 - 睡眠中心拍は主睡眠区間内のHeart Rateサンプルだけから求める。
 - 欠測と実測ゼロを区別する。
+- あすけん由来の栄養がある日は「Health Connectへ1日分が届いた日」である。
+  食事回数は`NutritionRecord`のstart/endが近いレコードを1食にまとめて数える。
 
 ## 参考値へ下げる指標
 

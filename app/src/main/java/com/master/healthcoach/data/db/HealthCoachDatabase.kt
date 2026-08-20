@@ -13,12 +13,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BodyCompositionEntity::class,
         HealthSourceStatusEntity::class,
         ExerciseSessionEntity::class,
+        NutritionMealEntity::class,
         GoalEntity::class,
         WeeklyReportEntity::class,
         ChatMessageEntity::class,
         ConversationMemoryEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class HealthCoachDatabase : RoomDatabase() {
@@ -36,6 +37,7 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 MIGRATION_3_4,
                 MIGRATION_4_5,
                 MIGRATION_5_6,
+                MIGRATION_6_7,
             ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -114,6 +116,31 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 )
                 db.execSQL(
                     "ALTER TABLE daily_health_summary ADD COLUMN carbohydrateGrams REAL",
+                )
+            }
+        }
+
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE daily_health_summary " +
+                        "ADD COLUMN mealCount INTEGER NOT NULL DEFAULT 0",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS nutrition_meals (" +
+                        "recordId TEXT NOT NULL PRIMARY KEY, " +
+                        "date TEXT NOT NULL, " +
+                        "startEpochMillis INTEGER NOT NULL, " +
+                        "endEpochMillis INTEGER NOT NULL, " +
+                        "mealLabel TEXT NOT NULL, " +
+                        "mealType INTEGER NOT NULL, " +
+                        "intakeCaloriesKcal REAL, " +
+                        "proteinGrams REAL, " +
+                        "totalFatGrams REAL, " +
+                        "carbohydrateGrams REAL, " +
+                        "recordCount INTEGER NOT NULL, " +
+                        "dataOrigin TEXT NOT NULL" +
+                        ")",
                 )
             }
         }

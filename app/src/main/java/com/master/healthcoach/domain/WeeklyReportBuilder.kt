@@ -282,6 +282,11 @@ object WeeklyReportBuilder {
                 carbohydrateGrams = carbohydrateAverageGrams,
                 intakeKcal = intakeCaloriesAverage,
             ),
+            mealCountDailyAverage = averageDouble(
+                currentDaily.mapNotNull { day ->
+                    day.mealCount.takeIf { it > 0 }?.toDouble()
+                },
+            ),
         )
     }
 
