@@ -26,6 +26,8 @@ import com.master.healthcoach.data.db.DailyHealthSummaryEntity
 import com.master.healthcoach.data.db.ExerciseSessionEntity
 import com.master.healthcoach.data.db.HealthSourceStatusEntity
 import com.master.healthcoach.domain.BodyCompositionCalculator
+import com.master.healthcoach.domain.NutritionInterval
+import com.master.healthcoach.domain.NutritionWriteShape
 import com.master.healthcoach.domain.TimedMeasurement
 import java.time.Duration
 import java.time.Instant
@@ -392,6 +394,7 @@ class HealthConnectGateway(private val context: Context) {
                 checkedAt,
                 if (canReadNutrition) null else "権限なし",
             ),
+            nutritionWriteShapeStatus(nutritionRecords, canReadNutrition, zoneId, checkedAt),
         )
 
         val exerciseSessions = exercises.map { session ->
@@ -500,6 +503,36 @@ class HealthConnectGateway(private val context: Context) {
         end: Instant,
         time: (T) -> Instant,
     ): List<T> = filter { time(it) >= start && time(it) < end }
+
+    private fun nutritionWriteShapeStatus(
+        records: List<NutritionRecord>,
+        canReadNutrition: Boolean,
+        zoneId: ZoneId,
+        checkedAt: Long,
+    ): HealthSourceStatusEntity {
+        val shape = NutritionWriteShape.inspect(
+            records.map {
+                NutritionInterval(
+                    startEpochMillis = it.startTime.toEpochMilli(),
+                    endEpochMillis = it.endTime.toEpochMilli(),
+                    mealType = it.mealType,
+                )
+            },
+            zoneId,
+        )
+        return HealthSourceStatusEntity(
+            recordType = "栄養（書込粒度）",
+            recordCount = records.size,
+            latestRecordEpochMillis = records.maxOfOrNull { it.startTime.toEpochMilli() },
+            origins = shape.summary,
+            status = when {
+                !canReadNutrition -> "権限なし"
+                records.isEmpty() -> "未取得"
+                else -> "取得可能"
+            },
+            checkedAtEpochMillis = checkedAt,
+        )
+    }
 
     private fun <T> sourceStatus(
         label: String,

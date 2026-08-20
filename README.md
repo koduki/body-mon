@@ -127,6 +127,7 @@ Androidの省電力制御によりWorkManagerの実行時刻は厳密ではあ�
 - アクティビティ強度は対応するHealth Connect機能がある端末でのみ取得します。
 - eufyアプリ内の16指標すべてがHealth Connectへ出るとは限りません。
 - あすけんがHealth Connectへ書き出す栄養素は摂取カロリーとPFCに限られます。
+- 食事回数は栄養レコードの件数やデータ取得時刻からは分かりません。日次の摂取合計だけを使います。
 - 初回バックフィル後、28日より古いHealth Connect修正は自動反映しません。
 - Health Connectで`Other Workout`として記録されない朝トレは継続日数へ反映されません。
 - 添付は画像（JPEG / PNG / WebP / HEIC / HEIF / BMP）、PDF、対応するテキスト形式に限り、

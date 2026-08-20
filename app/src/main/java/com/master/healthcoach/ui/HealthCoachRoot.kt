@@ -1815,7 +1815,7 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        SectionHeader("実機データ診断", "Mi Fitness、eufy、あすけんが実際に書いた項目を確認します")
+        SectionHeader("実機データ診断", "Mi Fitness、eufy、あすけんが実際に書いた項目と、栄養の書込粒度を確認します")
         state.sources.forEach { source ->
             Card {
                 Row(
