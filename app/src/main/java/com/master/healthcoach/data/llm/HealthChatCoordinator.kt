@@ -42,7 +42,7 @@ class HealthChatCoordinator(
         )
         val memory = repository.getMemory()?.summary
         val goal = repository.getGoal()
-        val recent = repository.getRecentMessages(CONTEXT_MESSAGE_LIMIT).map { messageEntity ->
+        val recent = repository.getRecentMessages(ChatHistoryPolicy.CONTEXT_MESSAGE_LIMIT).map { messageEntity ->
             GeminiTurn(
                 role = messageEntity.role,
                 text = messageEntity.content,
@@ -65,6 +65,7 @@ class HealthChatCoordinator(
         } ?: modelAnswer
         repository.addMessage("assistant", answer)
         refreshHabitMemory(apiKey, force = false)
+        repository.pruneChatHistory()
         return answer
     }
 
@@ -145,7 +146,6 @@ class HealthChatCoordinator(
     """.trimIndent()
 
     companion object {
-        private const val CONTEXT_MESSAGE_LIMIT = 20
         private const val HABIT_REFRESH_USER_MESSAGES = 6
         private const val DEFAULT_ATTACHMENT_PROMPT =
             "添付ファイルの内容を確認し、健康コーチとして重要な点を説明してください。"

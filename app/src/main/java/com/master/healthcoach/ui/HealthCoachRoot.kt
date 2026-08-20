@@ -1708,6 +1708,30 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        SectionHeader(
+            "会話メモリー",
+            "チャットは直近20件のみ表示します。それ以前の内容は習慣・制約の要約としてここに残ります",
+        )
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = state.conversationMemory
+                    ?: "まだ要約はありません。チャットを続けると、確認した習慣や制約がここに集約されます。",
+                modifier = Modifier.padding(14.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (state.conversationMemory == null) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+            )
+        }
+
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
         SectionHeader("データ管理", "バックアップはなく、削除後は元に戻せません")
         OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Default.Delete, null)

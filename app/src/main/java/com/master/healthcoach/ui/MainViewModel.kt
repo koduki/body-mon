@@ -11,6 +11,7 @@ import com.master.healthcoach.data.db.DailyHealthSummaryEntity
 import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.data.db.ExerciseSessionEntity
 import com.master.healthcoach.data.db.HealthSourceStatusEntity
+import com.master.healthcoach.data.db.WeeklyReportEntity
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.data.llm.ChatAttachment
 import com.master.healthcoach.data.llm.ChatAttachmentReader
@@ -33,6 +34,7 @@ data class MainUiState(
     val goal: GoalEntity? = null,
     val weekly: WeeklySnapshot? = null,
     val messages: List<ChatMessageEntity> = emptyList(),
+    val conversationMemory: String? = null,
     val availability: HealthConnectAvailability = HealthConnectAvailability.UNAVAILABLE,
     val grantedPermissions: Set<String> = emptySet(),
     val requiredPermissions: Set<String> = emptySet(),
@@ -75,30 +77,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.goal,
         repository.latestWeekly,
         repository.messages,
-    ) { goal, weekly, messages -> Triple(goal, weekly, messages) }
+        repository.memory,
+    ) { goal, weekly, messages, memory ->
+        AppData(goal, weekly, messages, memory?.summary?.takeIf { it.isNotBlank() })
+    }
 
     val uiState: StateFlow<MainUiState> = combine(
         healthData,
         appData,
         transient,
     ) { health, app, local ->
-        val (goal, weeklyEntity, messages) = app
         local.copy(
             daily = health.daily,
             body = health.body,
             sources = health.sources,
             exerciseSessions = health.exerciseSessions,
-            goal = goal,
-            weekly = weeklyEntity?.let {
+            goal = app.goal,
+            weekly = app.weeklyEntity?.let {
                 runCatching { container.json.decodeFromString<WeeklySnapshot>(it.snapshotJson) }
                     .getOrNull()
             },
-            messages = messages,
+            messages = app.messages,
+            conversationMemory = app.conversationMemory,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), transient.value)
 
     init {
         refreshPermissions(syncWhenGranted = true)
+        viewModelScope.launch {
+            runCatching { repository.pruneChatHistory() }
+        }
     }
 
     fun refreshPermissions(syncWhenGranted: Boolean = false) {
@@ -234,6 +242,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         weeklyAdvice = null,
                         apiKeyConfigured = false,
                         chatAttachments = emptyList(),
+                        conversationMemory = null,
                         message = "端末内データを削除しました",
                     )
                 }
@@ -296,5 +305,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val body: List<BodyCompositionEntity>,
         val sources: List<HealthSourceStatusEntity>,
         val exerciseSessions: List<ExerciseSessionEntity>,
+    )
+
+    private data class AppData(
+        val goal: GoalEntity?,
+        val weeklyEntity: WeeklyReportEntity?,
+        val messages: List<ChatMessageEntity>,
+        val conversationMemory: String?,
     )
 }
