@@ -108,6 +108,7 @@ class CoachAssessmentEngineTest {
             summary = "モデルの見立て",
             nextActions = listOf("モデル提案1", "モデル提案2", "モデル提案3"),
             confidence = "high",
+            clarifyingQuestions = listOf("外食は週に何回ありましたか？"),
         )
 
         val merged = CoachResponseComposer.mergeStructuredAdvice(modelAdvice, assessment)
@@ -120,6 +121,52 @@ class CoachAssessmentEngineTest {
         assertTrue(chat.contains("専門家ビュー（端末内KPI判定）"))
         assertTrue(chat.contains("今週の一手"))
         assertFalse(chat.contains("dietStartDate"))
+        assertEquals(listOf("外食は週に何回ありましたか？"), merged.clarifyingQuestions)
+    }
+
+    @Test
+    fun `flags low recorded protein without treating missing meals as zero`() {
+        val assessment = CoachAssessmentEngine.assess(
+            snapshot(
+                weightLossRate = 0.5,
+                fatTrend = -0.3,
+                leanTrend = 0.0,
+                routineDays = 6,
+                routineAdherence = 86,
+                stepsBaseline = 102,
+                sleepTargetDays = 5,
+                currentWeightMedianKg = 80.0,
+                proteinDailyAverageGrams = 80.0,
+                nutritionMeasurementDays = 7,
+            ),
+        )
+
+        assertEquals(CoachVerdict.WATCH, assessment.verdict)
+        assertTrue(assessment.signals.any { it.code == "PROTEIN_INTAKE_LOW" })
+        assertTrue(assessment.nextActions.any { it.contains("たんぱく質") })
+    }
+
+    @Test
+    fun `flags high fat energy share for a low-fat diet`() {
+        val assessment = CoachAssessmentEngine.assess(
+            snapshot(
+                weightLossRate = 0.5,
+                fatTrend = -0.3,
+                leanTrend = 0.0,
+                routineDays = 6,
+                routineAdherence = 86,
+                stepsBaseline = 102,
+                sleepTargetDays = 5,
+                currentWeightMedianKg = 80.0,
+                proteinDailyAverageGrams = 160.0,
+                nutritionMeasurementDays = 7,
+                fatEnergyPercent = 35.0,
+            ),
+        )
+
+        assertEquals(CoachVerdict.WATCH, assessment.verdict)
+        assertTrue(assessment.signals.any { it.code == "FAT_SHARE_HIGH" })
+        assertTrue(assessment.nextActions.any { it.contains("脂質") })
     }
 
     private fun snapshot(
@@ -133,6 +180,10 @@ class CoachAssessmentEngineTest {
         measurementConsistency: Int = 100,
         trendDays: Int = 28,
         bodyDays: Int = 7,
+        currentWeightMedianKg: Double? = null,
+        proteinDailyAverageGrams: Double? = null,
+        nutritionMeasurementDays: Int = 0,
+        fatEnergyPercent: Double? = null,
     ) = WeeklySnapshot(
         weekStart = "2026-07-24",
         weekEnd = "2026-07-30",
@@ -163,5 +214,9 @@ class CoachAssessmentEngineTest {
         sleepTargetHitDays = sleepTargetDays,
         sleepHeartRateBaselineDeltaBpm = 0,
         measurementTimeConsistencyPercent = measurementConsistency,
+        currentWeightMedianKg = currentWeightMedianKg,
+        proteinDailyAverageGrams = proteinDailyAverageGrams,
+        nutritionMeasurementDays = nutritionMeasurementDays,
+        fatEnergyPercent = fatEnergyPercent,
     )
 }

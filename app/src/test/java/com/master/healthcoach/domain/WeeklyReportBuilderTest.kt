@@ -64,6 +64,15 @@ class WeeklyReportBuilderTest {
         assertEquals(0L, report.sleepScheduleDeviationMinutes)
         assertEquals(2L, report.sleepHeartRateBaselineDeltaBpm)
         assertEquals(100, report.measurementTimeConsistencyPercent)
+        assertEquals(2_000.0, report.intakeCaloriesDailyAverage!!, 0.001)
+        assertEquals(130.0, report.proteinDailyAverageGrams!!, 0.001)
+        assertEquals(60.0, report.totalFatDailyAverageGrams!!, 0.001)
+        assertEquals(220.0, report.carbohydrateDailyAverageGrams!!, 0.001)
+        assertEquals(7, report.nutritionMeasurementDays)
+        assertEquals(-100.0, report.estimatedEnergyBalanceDailyAverage!!, 0.001)
+        assertEquals(26.0, report.proteinEnergyPercent!!, 0.001)
+        assertEquals(27.0, report.fatEnergyPercent!!, 0.001)
+        assertEquals(44.0, report.carbohydrateEnergyPercent!!, 0.001)
         assertTrue(report.dataLimitations.isEmpty())
     }
 
@@ -130,12 +139,56 @@ class WeeklyReportBuilderTest {
         assertEquals(30L, report.strengthMinutes)
     }
 
+    @Test
+    fun `averages nutrition only from recorded days and does not treat gaps as zero`() {
+        val today = LocalDate.of(2026, 7, 30)
+        val daily = listOf(
+            daily(
+                date = today,
+                intakeCaloriesKcal = 1_800.0,
+                proteinGrams = 90.0,
+                totalFatGrams = 50.0,
+                carbohydrateGrams = 200.0,
+            ),
+            daily(
+                date = today.minusDays(1),
+                intakeCaloriesKcal = 2_200.0,
+                proteinGrams = 150.0,
+                totalFatGrams = 70.0,
+                carbohydrateGrams = 240.0,
+            ),
+            daily(
+                date = today.minusDays(2),
+                intakeCaloriesKcal = null,
+                proteinGrams = null,
+                totalFatGrams = null,
+                carbohydrateGrams = null,
+            ),
+        )
+
+        val report = WeeklyReportBuilder.build(
+            today = today,
+            daily = daily,
+            body = emptyList(),
+            zoneId = zoneId,
+        )
+
+        assertEquals(2_000.0, report.intakeCaloriesDailyAverage!!, 0.001)
+        assertEquals(120.0, report.proteinDailyAverageGrams!!, 0.001)
+        assertEquals(2, report.nutritionMeasurementDays)
+        assertNotNull(report.dataLimitations.find { it.contains("食事記録") })
+    }
+
     private fun daily(
         date: LocalDate,
         steps: Long = 8_000,
         strengthMinutes: Long = 0,
         morningRoutineMinutes: Long = 5,
         sleepHeartRate: Long = 68,
+        intakeCaloriesKcal: Double? = 2_000.0,
+        proteinGrams: Double? = 130.0,
+        totalFatGrams: Double? = 60.0,
+        carbohydrateGrams: Double? = 220.0,
     ) = DailyHealthSummaryEntity(
         date = date.toString(),
         steps = steps,
@@ -159,6 +212,10 @@ class WeeklyReportBuilderTest {
         heartRateMaximumBpm = 135,
         heartRateMeasurementCount = 100,
         basalCaloriesKcal = 1_650.0,
+        intakeCaloriesKcal = intakeCaloriesKcal,
+        proteinGrams = proteinGrams,
+        totalFatGrams = totalFatGrams,
+        carbohydrateGrams = carbohydrateGrams,
         dataOrigins = "mi fitness",
         updatedAtEpochMillis = 0,
     )

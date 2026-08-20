@@ -228,6 +228,12 @@ class GeminiClient(
                 add(function("get_heart_rate_summary", "指定期間の心拍数を取得します"))
                 add(function("get_activity_intensity_summary", "指定期間の中強度・高強度活動時間を取得します"))
                 add(function("get_metabolism_summary", "指定期間の基礎代謝を取得します"))
+                add(
+                    function(
+                        "get_nutrition_summary",
+                        "指定期間の摂取カロリー、たんぱく質、脂質、炭水化物とPFCエネルギー比を取得します",
+                    ),
+                )
                 add(buildJsonObject {
                     put("name", "get_goal_progress")
                     put("description", "現在の目標と直近の進捗を取得します")
@@ -270,6 +276,11 @@ class GeminiClient(
                 put("items", stringSchema())
                 put("maxItems", 3)
             })
+            put("clarifyingQuestions", buildJsonObject {
+                put("type", "array")
+                put("items", stringSchema())
+                put("maxItems", 2)
+            })
             put("confidence", buildJsonObject {
                 put("type", "string")
                 put("enum", buildJsonArray { add("high"); add("medium"); add("low") })
@@ -283,6 +294,7 @@ class GeminiClient(
             add("summary")
             add("nextActions")
             add("habitInsights")
+            add("clarifyingQuestions")
             add("confidence")
             add("dataLimitations")
         })

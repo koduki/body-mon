@@ -26,9 +26,21 @@ data class DailyHealthSummaryEntity(
     val heartRateMaximumBpm: Long?,
     val heartRateMeasurementCount: Long?,
     val basalCaloriesKcal: Double?,
+    val intakeCaloriesKcal: Double? = null,
+    val proteinGrams: Double? = null,
+    val totalFatGrams: Double? = null,
+    val carbohydrateGrams: Double? = null,
     val dataOrigins: String,
     val updatedAtEpochMillis: Long,
 )
+
+val DailyHealthSummaryEntity.estimatedEnergyBalanceKcal: Double?
+    get() {
+        val intake = intakeCaloriesKcal ?: return null
+        val basal = basalCaloriesKcal ?: return null
+        val active = activeCaloriesKcal ?: return null
+        return intake - basal - active
+    }
 
 @Entity(tableName = "body_composition_daily")
 data class BodyCompositionEntity(

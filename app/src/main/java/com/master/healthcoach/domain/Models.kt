@@ -65,6 +65,19 @@ data class WeeklySnapshot(
     val fatMassToGoalKg: Double? = null,
     val requiredFatLossKgPerWeek: Double? = null,
     val dietStartDate: String? = null,
+    val intakeCaloriesDailyAverage: Double? = null,
+    val proteinDailyAverageGrams: Double? = null,
+    val totalFatDailyAverageGrams: Double? = null,
+    val carbohydrateDailyAverageGrams: Double? = null,
+    val nutritionMeasurementDays: Int = 0,
+    val previousWeekIntakeCaloriesDailyAverage: Double? = null,
+    val previousWeekProteinDailyAverageGrams: Double? = null,
+    val previousWeekTotalFatDailyAverageGrams: Double? = null,
+    val previousWeekCarbohydrateDailyAverageGrams: Double? = null,
+    val estimatedEnergyBalanceDailyAverage: Double? = null,
+    val proteinEnergyPercent: Double? = null,
+    val fatEnergyPercent: Double? = null,
+    val carbohydrateEnergyPercent: Double? = null,
 )
 
 @Serializable
@@ -76,6 +89,7 @@ data class AdviceResponse(
     val habitInsights: List<String> = emptyList(),
     val confidence: String = "medium",
     val dataLimitations: List<String> = emptyList(),
+    val clarifyingQuestions: List<String> = emptyList(),
 )
 
 data class BodyCalculation(

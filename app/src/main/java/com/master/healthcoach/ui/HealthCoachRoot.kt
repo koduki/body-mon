@@ -46,6 +46,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -94,8 +95,10 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.master.healthcoach.data.db.BodyCompositionEntity
 import com.master.healthcoach.data.db.GoalEntity
+import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.domain.TrendMath
+import com.master.healthcoach.domain.WeeklySnapshot
 import java.text.DecimalFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -232,7 +235,7 @@ private fun PermissionScreen(
         Text("端末内の健康データを接続", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(10.dp))
         Text(
-            "体組成・歩数・運動・活動消費・睡眠・心拍・活動強度を" +
+            "体組成・歩数・運動・活動消費・睡眠・心拍・活動強度・食事記録を" +
                 "Health Connectから読み取ります。" +
                 "生データはこの端末に留まり、Geminiには明示操作時に加工済みデータだけを送ります。",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -286,7 +289,8 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
             it.sleepMinutes != null ||
             it.heartRateMeasurementCount != null ||
             it.moderateIntensityMinutes != null ||
-            it.vigorousIntensityMinutes != null
+            it.vigorousIntensityMinutes != null ||
+            it.intakeCaloriesKcal != null
     } == true
 
     LazyColumn(
@@ -442,12 +446,54 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
                 MetricCard(
                     "基礎代謝",
-                    todayDaily?.basalCaloriesKcal?.roundToLong()?.let { "$it kcal" }
-                        ?: "未取得",
+                    todayDaily?.basalCaloriesKcal.kcal(),
                     "Health Connect集計・参考",
                     Modifier.weight(1f),
                 )
             }
+        }
+        item { SectionHeader("食事・栄養", "あすけんがHealth Connectへ書き出した当日の摂取記録") }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetricCard(
+                    "摂取カロリー",
+                    todayDaily?.intakeCaloriesKcal.kcal(),
+                    "本日累計・欠測は未取得",
+                    Modifier.weight(1f),
+                    Icons.Default.Restaurant,
+                )
+                MetricCard(
+                    "推定収支",
+                    todayDaily?.estimatedEnergyBalanceKcal?.let { signed(it) + " kcal" }
+                        ?: "未取得",
+                    "摂取−(基礎+活動)・参考",
+                    Modifier.weight(1f),
+                )
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetricCard(
+                    "たんぱく質",
+                    todayDaily?.proteinGrams.grams(),
+                    "本日累計",
+                    Modifier.weight(1f),
+                )
+                MetricCard(
+                    "脂質",
+                    todayDaily?.totalFatGrams.grams(),
+                    "本日累計",
+                    Modifier.weight(1f),
+                )
+            }
+        }
+        item {
+            MetricCard(
+                "炭水化物",
+                todayDaily?.carbohydrateGrams.grams(),
+                "本日累計。ビタミン・食塩相当量はあすけんから書き出されない",
+                Modifier.fillMaxWidth(),
+            )
         }
         item { SectionHeader("睡眠と心拍", "本日に終了した主睡眠と本日の心拍記録") }
         item {
@@ -888,7 +934,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item { SectionHeader("参考値", "消費カロリーは減量ペースの根拠にしません") }
+                item { SectionHeader("参考値", "消費・摂取カロリーは減量ペースの根拠にしません") }
                 item {
                     TrendCard(
                         "活動消費",
@@ -904,6 +950,24 @@ private fun TrendsScreen(state: MainUiState) {
                         "kcal/日",
                         dates.map { date ->
                             TrendPoint(date, dailyByDate[date.toString()]?.basalCaloriesKcal)
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        "摂取カロリー",
+                        "kcal",
+                        dates.map { date ->
+                            TrendPoint(date, dailyByDate[date.toString()]?.intakeCaloriesKcal)
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
+                        "たんぱく質",
+                        "g",
+                        dates.map { date ->
+                            TrendPoint(date, dailyByDate[date.toString()]?.proteinGrams)
                         },
                     )
                 }
@@ -1254,6 +1318,89 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
             }
 
             item {
+                Card {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            "食事・栄養",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "PFCエネルギー比 ${pfcEnergyRatio(report)}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            "低脂質の運用目安は脂質15〜25%。グラムとエネルギー比の両方で見ます。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ReportTile(
+                                title = "摂取カロリー",
+                                mainValue = report.intakeCaloriesDailyAverage.kcal("/日"),
+                                subValue = compareDiff(
+                                    report.intakeCaloriesDailyAverage,
+                                    report.previousWeekIntakeCaloriesDailyAverage,
+                                )?.let { "前週比 ${signed(it)} kcal" }
+                                    ?: "記録 ${report.nutritionMeasurementDays}日",
+                                icon = Icons.Default.Restaurant,
+                                modifier = Modifier.weight(1f),
+                            )
+                            ReportTile(
+                                title = "たんぱく質",
+                                mainValue = report.proteinDailyAverageGrams.grams("/日"),
+                                subValue = report.proteinEnergyPercent.energyPercentLabel()
+                                    ?: compareDiff(
+                                        report.proteinDailyAverageGrams,
+                                        report.previousWeekProteinDailyAverageGrams,
+                                    )?.let { "前週比 ${signed(it)} g" }
+                                    ?: "あすけん由来の記録",
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ReportTile(
+                                title = "脂質",
+                                mainValue = report.totalFatDailyAverageGrams.grams("/日"),
+                                subValue = report.fatEnergyPercent.energyPercentLabel()
+                                    ?: compareDiff(
+                                        report.totalFatDailyAverageGrams,
+                                        report.previousWeekTotalFatDailyAverageGrams,
+                                    )?.let { "前週比 ${signed(it)} g" }
+                                    ?: "本日までの7日平均",
+                                modifier = Modifier.weight(1f),
+                            )
+                            ReportTile(
+                                title = "炭水化物",
+                                mainValue = report.carbohydrateDailyAverageGrams.grams("/日"),
+                                subValue = report.carbohydrateEnergyPercent.energyPercentLabel()
+                                    ?: compareDiff(
+                                        report.carbohydrateDailyAverageGrams,
+                                        report.previousWeekCarbohydrateDailyAverageGrams,
+                                    )?.let { "前週比 ${signed(it)} g" }
+                                    ?: "本日までの7日平均",
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Text(
+                            "推定収支 ${
+                                report.estimatedEnergyBalanceDailyAverage?.let {
+                                    "${signed(it)} kcal/日"
+                                } ?: "未取得"
+                            }。摂取−(基礎代謝+活動消費)で、デバイス推定のため参考値です。" +
+                                "あすけんが書き出すのは摂取カロリーとPFCのみです。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            item {
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -1266,17 +1413,15 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         Text("参考値", fontWeight = FontWeight.SemiBold)
                         Text(
                             "活動消費 ${
-                                report.activeCaloriesDailyAverage?.roundToLong()?.let {
-                                    "$it kcal/日"
-                                } ?: "未取得"
+                                report.activeCaloriesDailyAverage.kcal("/日")
                             }・基礎代謝 ${
-                                report.basalCaloriesDailyAverage?.roundToLong()?.let {
-                                    "$it kcal/日"
-                                } ?: "未取得"
+                                report.basalCaloriesDailyAverage.kcal("/日")
+                            }・摂取 ${
+                                report.intakeCaloriesDailyAverage.kcal("/日")
                             }",
                         )
                         Text(
-                            "デバイスの推定消費量はエネルギー赤字の算定には使わず、" +
+                            "デバイスの推定消費量と食事記録の差はエネルギー赤字の断定には使わず、" +
                                 "体重ペースと行動KPIで調整します。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1324,7 +1469,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
             item {
                 SectionHeader(
                     "専門コーチ分析",
-                    "端末内KPI判定とGeminiによる健康・習慣アドバイス",
+                    "低脂質ダイエットの観点で、食事・運動量・摂取バランス・PFCを確認",
                 )
             }
             item {
@@ -1337,6 +1482,12 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         if (advice.habitInsights.isNotEmpty()) {
                             Text("習慣との関連", fontWeight = FontWeight.SemiBold)
                             advice.habitInsights.forEach { Text("・$it") }
+                        }
+                        if (advice.clarifyingQuestions.isNotEmpty()) {
+                            Text("先に確認したいこと", fontWeight = FontWeight.SemiBold)
+                            advice.clarifyingQuestions.forEachIndexed { index, question ->
+                                Text("${index + 1}. $question")
+                            }
                         }
                         if (advice.nextActions.isNotEmpty()) {
                             Text("次の一手", fontWeight = FontWeight.SemiBold)
@@ -1664,7 +1815,7 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        SectionHeader("実機データ診断", "Mi Fitnessとeufyが実際に書いた項目を確認します")
+        SectionHeader("実機データ診断", "Mi Fitness、eufy、あすけんが実際に書いた項目を確認します")
         state.sources.forEach { source ->
             Card {
                 Row(
@@ -1700,7 +1851,7 @@ private fun SettingsScreen(
         if (state.sources.isEmpty()) Text("同期後に診断結果が表示されます。")
         if (!state.grantedPermissions.containsAll(state.requiredPermissions)) {
             Button(onClick = onRequestPermissions, modifier = Modifier.fillMaxWidth()) {
-                Text("睡眠・心拍・履歴などの権限を許可")
+                Text("睡眠・心拍・栄養・履歴などの権限を許可")
             }
         }
         OutlinedButton(onClick = onOpenHealthConnect, modifier = Modifier.fillMaxWidth()) {
@@ -2051,6 +2202,11 @@ private fun compareDiff(current: Long?, previous: Long?): Long? {
     return current - previous
 }
 
+private fun compareDiff(current: Double?, previous: Double?): Double? {
+    if (current == null || previous == null) return null
+    return current - previous
+}
+
 @Composable
 private fun AdviceBlock(title: String, body: String) {
     Column {
@@ -2115,6 +2271,18 @@ private fun leanTrendGuidance(trend: Double?): String = when {
 private fun Double?.signedOrMissing(unit: String): String =
     this?.let { "${signed(it)} $unit" } ?: "未取得"
 
+private fun pfcEnergyRatio(report: WeeklySnapshot): String {
+    val parts = listOfNotNull(
+        report.proteinEnergyPercent?.let { "P ${DecimalFormat("0").format(it)}%" },
+        report.fatEnergyPercent?.let { "F ${DecimalFormat("0").format(it)}%" },
+        report.carbohydrateEnergyPercent?.let { "C ${DecimalFormat("0").format(it)}%" },
+    )
+    return parts.joinToString(" ・ ").ifBlank { "未取得" }
+}
+
+private fun Double?.energyPercentLabel(): String? =
+    this?.let { "エネルギー比 ${DecimalFormat("0").format(it)}%" }
+
 private val TREND_DATE_FORMAT = DateTimeFormatter.ofPattern("M/d")
 private val TREND_DETAIL_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy/M/d (E)", Locale.JAPAN)
 
@@ -2132,6 +2300,10 @@ private fun Long.asFileSize(): String = when {
     else -> "${DecimalFormat("0.#").format(this / (1024.0 * 1024.0))} MB"
 }
 private fun Double?.kg(): String = this?.let { "${DecimalFormat("0.0").format(it)} kg" } ?: "未取得"
+private fun Double?.grams(suffix: String = ""): String =
+    this?.let { "${DecimalFormat("0.0").format(it)} g$suffix" } ?: "未取得"
+private fun Double?.kcal(suffix: String = ""): String =
+    this?.roundToLong()?.let { "$it kcal$suffix" } ?: "未取得"
 private fun Double?.clean(): String? = this?.let { DecimalFormat("0.##").format(it) }
 private fun signed(value: Double): String = if (value >= 0) "+${DecimalFormat("0.##").format(value)}" else DecimalFormat("0.##").format(value)
 private fun formatClock(epochMillis: Long): String = DateTimeFormatter.ofPattern("HH:mm")
