@@ -24,4 +24,19 @@ object NutritionMacros {
         carbohydrateGrams: Double?,
         intakeKcal: Double?,
     ): Double? = energyPercent(carbohydrateGrams, CARBOHYDRATE_KCAL_PER_GRAM, intakeKcal)
+
+    fun atwaterEnergyKcal(
+        proteinGrams: Double?,
+        fatGrams: Double?,
+        carbohydrateGrams: Double?,
+    ): Double? {
+        val parts = listOfNotNull(
+            proteinGrams?.times(PROTEIN_KCAL_PER_GRAM),
+            fatGrams?.times(FAT_KCAL_PER_GRAM),
+            carbohydrateGrams?.times(CARBOHYDRATE_KCAL_PER_GRAM),
+        )
+        if (parts.isEmpty()) return null
+        val energy = parts.sum()
+        return energy.takeIf { it > 0 }
+    }
 }

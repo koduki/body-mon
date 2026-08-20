@@ -246,7 +246,7 @@ class HealthToolExecutor(private val repository: HealthRepository) {
                 "sourceNote",
                 "あすけんからHealth Connectへ書き出されるのは摂取カロリー・たんぱく質・脂質・炭水化物。" +
                     "欠測日は0kcalとせず、未記録として扱う。" +
-                    "食事回数はレコード件数や取得時刻から推定しない。" +
+                    "食事回数はNutritionRecordのstart/endが近いレコードを1食にまとめて数える。" +
                     "推定エネルギー収支は摂取−基礎代謝−活動消費で、デバイス推定のため参考値。" +
                     "PFCエネルギー比は記録グラム×4/9/4kcalを摂取カロリーで割った参考値。",
             )

@@ -11,6 +11,7 @@ import com.master.healthcoach.data.db.DailyHealthSummaryEntity
 import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.data.db.ExerciseSessionEntity
 import com.master.healthcoach.data.db.HealthSourceStatusEntity
+import com.master.healthcoach.data.db.NutritionMealEntity
 import com.master.healthcoach.data.db.WeeklyReportEntity
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.data.llm.ChatAttachment
@@ -31,6 +32,7 @@ data class MainUiState(
     val body: List<BodyCompositionEntity> = emptyList(),
     val sources: List<HealthSourceStatusEntity> = emptyList(),
     val exerciseSessions: List<ExerciseSessionEntity> = emptyList(),
+    val nutritionMeals: List<NutritionMealEntity> = emptyList(),
     val goal: GoalEntity? = null,
     val weekly: WeeklySnapshot? = null,
     val messages: List<ChatMessageEntity> = emptyList(),
@@ -70,8 +72,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.daily,
         repository.body,
         repository.sources,
-        repository.exerciseSessions,
-    ) { daily, body, sources, sessions -> HealthData(daily, body, sources, sessions) }
+        combine(repository.exerciseSessions, repository.nutritionMeals) { sessions, meals ->
+            sessions to meals
+        },
+    ) { daily, body, sources, sessionsAndMeals ->
+        HealthData(daily, body, sources, sessionsAndMeals.first, sessionsAndMeals.second)
+    }
 
     private val appData = combine(
         repository.goal,
@@ -92,6 +98,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             body = health.body,
             sources = health.sources,
             exerciseSessions = health.exerciseSessions,
+            nutritionMeals = health.nutritionMeals,
             goal = app.goal,
             weekly = app.weeklyEntity?.let {
                 runCatching { container.json.decodeFromString<WeeklySnapshot>(it.snapshotJson) }
@@ -305,6 +312,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val body: List<BodyCompositionEntity>,
         val sources: List<HealthSourceStatusEntity>,
         val exerciseSessions: List<ExerciseSessionEntity>,
+        val nutritionMeals: List<NutritionMealEntity>,
     )
 
     private data class AppData(

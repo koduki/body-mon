@@ -40,11 +40,11 @@ class NutritionWriteShapeTest {
         assertTrue(shape.likelyDailyTotals)
         assertFalse(shape.looksMealScoped)
         assertTrue(shape.summary.contains("日次合計"))
-        assertTrue(shape.summary.contains("確定できない"))
+        assertTrue(shape.summary.contains("1食"))
     }
 
     @Test
-    fun `single instant per day at advice-view time is still not a meal count`() {
+    fun `single instant per day is still described as a daily-total write shape`() {
         val records = (0L until 5L).map { offset ->
             interval(
                 date = LocalDate.of(2026, 8, 13).plusDays(offset),
@@ -58,11 +58,11 @@ class NutritionWriteShapeTest {
         assertEquals(0.0, shape.medianDurationHours)
         assertTrue(shape.likelyDailyTotals)
         assertFalse(shape.looksMealScoped)
-        assertTrue(shape.summary.contains("データ取得時刻からも件数からも確定できない"))
+        assertTrue(shape.summary.contains("日次合計"))
     }
 
     @Test
-    fun `breakfast lunch dinner records look meal scoped but are not adopted as a count`() {
+    fun `breakfast lunch dinner records look meal scoped`() {
         val date = LocalDate.of(2026, 8, 13)
         val records = listOf(
             interval(date, LocalTime.of(7, 30), LocalTime.of(8, 0), mealType = NutritionWriteShape.MEAL_TYPE_BREAKFAST),
@@ -76,7 +76,7 @@ class NutritionWriteShapeTest {
         assertTrue(shape.looksMealScoped)
         assertEquals(listOf("夕", "昼", "朝"), shape.mealTypeLabels)
         assertTrue(shape.summary.contains("食事単位の可能性"))
-        assertTrue(shape.summary.contains("回数を採用せず"))
+        assertTrue(shape.summary.contains("1食にまとめて"))
     }
 
     @Test
@@ -99,7 +99,7 @@ class NutritionWriteShapeTest {
         assertFalse(shape.likelyDailyTotals)
         assertFalse(shape.looksMealScoped)
         assertTrue(shape.summary.contains("粒度は未確定"))
-        assertTrue(shape.summary.contains("推定しない"))
+        assertTrue(shape.summary.contains("start/end"))
     }
 
     private fun interval(

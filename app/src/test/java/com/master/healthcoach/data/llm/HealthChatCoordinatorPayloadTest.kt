@@ -73,6 +73,7 @@ class HealthChatCoordinatorPayloadTest {
             proteinEnergyPercent = 25.3,
             fatEnergyPercent = 26.1,
             carbohydrateEnergyPercent = 44.2,
+            mealCountDailyAverage = 3.2,
         )
 
         val payload = snapshot.existingAiContract().toString()
@@ -88,6 +89,8 @@ class HealthChatCoordinatorPayloadTest {
         assertTrue(payload.contains("\"carbohydrateEnergyPercent\":44.2"))
         assertFalse(payload.contains("estimatedEnergyBalanceDailyAverage"))
         assertFalse(payload.contains("-250"))
+        assertFalse(payload.contains("mealCountDailyAverage"))
+        assertFalse(payload.contains("3.2"))
     }
 
     @Test

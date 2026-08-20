@@ -5,7 +5,7 @@ import java.time.ZoneId
 
 /**
  * Health Connect の栄養レコードが「1日合計」か「食事単位」かを実機で見分けるための診断。
- * 食事回数のプロダクト指標には使わない。
+ * 食事回数そのものは start/end クラスタ（`NutritionMealClusterer`）で数える。
  */
 data class NutritionInterval(
     val startEpochMillis: Long,
@@ -41,7 +41,7 @@ data class NutritionWriteShape(
                     medianDurationHours = null,
                     likelyDailyTotals = false,
                     looksMealScoped = false,
-                    summary = "同期範囲に栄養レコードなし。食事回数は時刻からも件数からも確定できない",
+                    summary = "同期範囲に栄養レコードなし。食事回数はstart/endのクラスタから確定できない",
                 )
             }
             val byDay = records.groupBy { record ->
@@ -93,11 +93,11 @@ data class NutritionWriteShape(
             } ?: "件数不明"
             val interpretation = when {
                 likelyDailyTotals ->
-                    "日次合計の書き方に近く、食事回数はデータ取得時刻からも件数からも確定できない"
+                    "日次合計の書き方に近く、区間が1日に近い場合は1食（日次合計）として扱う"
                 looksMealScoped ->
-                    "食事単位の可能性。ただし本アプリは回数を採用せず、日次の摂取合計だけを使う"
+                    "食事単位の可能性。start/endが近いレコードを1食にまとめて回数とPFCを出す"
                 else ->
-                    "粒度は未確定。食事回数はstartTimeや同期時刻から推定しない"
+                    "粒度は未確定。start/endが近いレコードを1食として回数を数える"
             }
             return NutritionWriteShape(
                 recordDays = byDay.size,

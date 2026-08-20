@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -83,6 +84,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -94,9 +96,13 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.master.healthcoach.data.db.BodyCompositionEntity
+import com.master.healthcoach.data.db.DailyHealthSummaryEntity
 import com.master.healthcoach.data.db.GoalEntity
+import com.master.healthcoach.data.db.NutritionMealEntity
 import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
 import com.master.healthcoach.data.health.HealthConnectAvailability
+import com.master.healthcoach.domain.PfcBalance
+import com.master.healthcoach.domain.PfcVerdict
 import com.master.healthcoach.domain.TrendMath
 import com.master.healthcoach.domain.WeeklySnapshot
 import java.text.DecimalFormat
@@ -277,12 +283,18 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
     val todaySessions = state.exerciseSessions.filter {
         it.startEpochMillis in todayStart until tomorrowStart
     }
+    val todayMeals = state.nutritionMeals
+        .filter { it.date == todayStr }
+        .sortedBy { it.startEpochMillis }
     val morningRoutineMinutes = maxOf(
         todayDaily?.morningRoutineMinutes ?: 0,
         todaySessions.filter { it.category == "morning_routine" }
             .sumOf { it.durationMinutes },
     )
-    val hasTodayData = todayBody != null || todaySessions.isNotEmpty() || todayDaily?.let {
+    val hasTodayData = todayBody != null ||
+        todaySessions.isNotEmpty() ||
+        todayMeals.isNotEmpty() ||
+        todayDaily?.let {
         it.steps != null ||
             it.distanceMeters != null ||
             it.activeCaloriesKcal != null ||
@@ -452,7 +464,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
             }
         }
-        item { SectionHeader("食事・栄養", "あすけんがHealth Connectへ書き出した当日の摂取記録") }
+        item { SectionHeader("食事・栄養", "NutritionRecordのstart/endが近いものを1食にまとめ、PFCを確認") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
@@ -463,10 +475,11 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                     Icons.Default.Restaurant,
                 )
                 MetricCard(
-                    "推定収支",
-                    todayDaily?.estimatedEnergyBalanceKcal?.let { signed(it) + " kcal" }
+                    "食事回数",
+                    todayMeals.size.takeIf { it > 0 }?.let { "$it 回" }
+                        ?: todayDaily?.mealCount?.takeIf { it > 0 }?.let { "$it 回" }
                         ?: "未取得",
-                    "摂取−(基礎+活動)・参考",
+                    "start/endクラスタ",
                     Modifier.weight(1f),
                 )
             }
@@ -474,26 +487,47 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
-                    "たんぱく質",
-                    todayDaily?.proteinGrams.grams(),
-                    "本日累計",
+                    "推定収支",
+                    todayDaily?.estimatedEnergyBalanceKcal?.let { signed(it) + " kcal" }
+                        ?: "未取得",
+                    "摂取−(基礎+活動)・参考",
                     Modifier.weight(1f),
                 )
                 MetricCard(
-                    "脂質",
-                    todayDaily?.totalFatGrams.grams(),
-                    "本日累計",
+                    "たんぱく質",
+                    todayDaily?.proteinGrams.grams(),
+                    displayedBody?.weightKg?.takeIf { it > 0 }?.let { weight ->
+                        todayDaily?.proteinGrams?.let { protein ->
+                            "体重1kgあたり ${DecimalFormat("0.00").format(protein / weight)} g"
+                        }
+                    } ?: "本日累計",
                     Modifier.weight(1f),
                 )
             }
         }
         item {
-            MetricCard(
-                "炭水化物",
-                todayDaily?.carbohydrateGrams.grams(),
-                "本日累計。ビタミン・食塩相当量はあすけんから書き出されない",
-                Modifier.fillMaxWidth(),
-            )
+            Card {
+                DailyPfcSummary(
+                    title = "1日のPFC",
+                    subtitle = "低脂質の運用目安は脂質エネルギー比15〜25%、たんぱく質は15%以上",
+                    balance = todayDaily?.pfcBalance(),
+                )
+            }
+        }
+        if (todayMeals.isEmpty()) {
+            item {
+                EmptyCard(
+                    "今日の食事クラスタはありません",
+                    "あすけんの栄養レコードがHealth Connectへ届くと、start/endから食事回数とPFCを表示します",
+                )
+            }
+        } else {
+            item {
+                MealPfcChartCard(todayMeals)
+            }
+            items(todayMeals, key = { it.recordId }) { meal ->
+                MealPfcRow(meal)
+            }
         }
         item { SectionHeader("睡眠と心拍", "本日に終了した主睡眠と本日の心拍記録") }
         item {
@@ -971,6 +1005,22 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
+                item {
+                    TrendCard(
+                        "食事回数",
+                        "回",
+                        dates.map { date ->
+                            val count = dailyByDate[date.toString()]?.mealCount
+                            TrendPoint(
+                                date,
+                                count?.takeIf { it > 0 }?.toDouble(),
+                            )
+                        },
+                    )
+                }
+                item {
+                    DailyPfcCompositionCard(dates, dailyByDate)
+                }
                 item { SectionHeader("期間内の運動", "Health Connectの運動セッション") }
                 if (sessions.isEmpty()) {
                     item { EmptyCard("この期間の運動セッションはありません", "記録がある期間へスワイプしてください") }
@@ -1328,17 +1378,27 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                         )
-                        Text(
-                            "PFCエネルギー比 ${pfcEnergyRatio(report)}",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            "低脂質の運用目安は脂質15〜25%。グラムとエネルギー比の両方で見ます。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        DailyPfcSummary(
+                            title = "7日平均のPFC",
+                            subtitle = "低脂質の運用目安は脂質エネルギー比15〜25%、たんぱく質は15%以上",
+                            balance = report.takeIf { it.nutritionMeasurementDays > 0 }?.let {
+                                PfcBalance.from(
+                                    it.intakeCaloriesDailyAverage,
+                                    it.proteinDailyAverageGrams,
+                                    it.totalFatDailyAverageGrams,
+                                    it.carbohydrateDailyAverageGrams,
+                                )
+                            },
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ReportTile(
+                                title = "食事回数",
+                                mainValue = report.mealCountDailyAverage?.let {
+                                    "${DecimalFormat("0.0").format(it)} 回/日"
+                                } ?: "未取得",
+                                subValue = "start/endクラスタ",
+                                modifier = Modifier.weight(1f),
+                            )
                             ReportTile(
                                 title = "摂取カロリー",
                                 mainValue = report.intakeCaloriesDailyAverage.kcal("/日"),
@@ -1350,6 +1410,8 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                                 icon = Icons.Default.Restaurant,
                                 modifier = Modifier.weight(1f),
                             )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
                                 title = "たんぱく質",
                                 mainValue = report.proteinDailyAverageGrams.grams("/日"),
@@ -1361,8 +1423,6 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                                     ?: "あすけん由来の記録",
                                 modifier = Modifier.weight(1f),
                             )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
                                 title = "脂質",
                                 mainValue = report.totalFatDailyAverageGrams.grams("/日"),
@@ -1374,6 +1434,8 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                                     ?: "本日までの7日平均",
                                 modifier = Modifier.weight(1f),
                             )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
                                 title = "炭水化物",
                                 mainValue = report.carbohydrateDailyAverageGrams.grams("/日"),
@@ -2130,6 +2192,283 @@ private fun InteractiveSparkline(
         }
     }
 }
+
+private val ProteinBarColor = Color(0xFF2A9D8F)
+private val FatBarColor = Color(0xFFE9C46A)
+private val CarbBarColor = Color(0xFF4C6EF5)
+
+@Composable
+private fun DailyPfcSummary(
+    title: String,
+    subtitle: String,
+    balance: PfcBalance?,
+) {
+    Column(
+        Modifier.fillMaxWidth().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(title, fontWeight = FontWeight.SemiBold)
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (balance == null) {
+            Text("未取得", style = MaterialTheme.typography.titleMedium)
+        } else {
+            PfcVerdictChip(balance)
+            PfcStackedBar(balance)
+            PfcLegend(balance)
+            Text(
+                listOfNotNull(
+                    balance.proteinGrams?.let { "たんぱく質 ${DecimalFormat("0.0").format(it)}g" },
+                    balance.fatGrams?.let { "脂質 ${DecimalFormat("0.0").format(it)}g" },
+                    balance.carbohydrateGrams?.let { "炭水化物 ${DecimalFormat("0.0").format(it)}g" },
+                ).joinToString(" ・ ").ifBlank { "グラム未取得" },
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MealPfcChartCard(meals: List<NutritionMealEntity>) {
+    Card {
+        Column(
+            Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("食事ごとのPFC", fontWeight = FontWeight.SemiBold)
+            Text(
+                "start/endが45分以内または区間が重なるレコードを1食にまとめています",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                Modifier.fillMaxWidth().height(140.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                meals.forEach { meal ->
+                    Column(
+                        Modifier.weight(1f).fillMaxHeight(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        PfcVerticalBar(
+                            balance = meal.pfcBalance(),
+                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                        )
+                        Text(meal.mealLabel, style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+            PfcLegend(null)
+        }
+    }
+}
+
+@Composable
+private fun MealPfcRow(meal: NutritionMealEntity) {
+    val balance = meal.pfcBalance()
+    Card {
+        Column(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(meal.mealLabel, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${formatClock(meal.startEpochMillis)}〜${formatClock(meal.endEpochMillis)}" +
+                            if (meal.recordCount > 1) " ・${meal.recordCount}件" else "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                PfcVerdictChip(balance)
+            }
+            PfcStackedBar(balance)
+            Text(
+                listOfNotNull(
+                    meal.intakeCaloriesKcal?.roundToLong()?.let { "$it kcal" },
+                    meal.proteinGrams?.let { "P ${DecimalFormat("0.0").format(it)}g" },
+                    meal.totalFatGrams?.let { "F ${DecimalFormat("0.0").format(it)}g" },
+                    meal.carbohydrateGrams?.let { "C ${DecimalFormat("0.0").format(it)}g" },
+                ).joinToString(" ・ ").ifBlank { "栄養値未取得" },
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun DailyPfcCompositionCard(
+    dates: List<LocalDate>,
+    dailyByDate: Map<String, DailyHealthSummaryEntity>,
+) {
+    Card {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("1日のPFC構成", fontWeight = FontWeight.SemiBold)
+            Text(
+                "棒はエネルギー比。欠測日は空欄です",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(
+                Modifier.fillMaxWidth().height(120.dp),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                dates.forEach { date ->
+                    val balance = dailyByDate[date.toString()]?.pfcBalance()
+                    PfcVerticalBar(
+                        balance = balance,
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    dates.first().format(TREND_DATE_FORMAT),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Text(
+                    dates.last().format(TREND_DATE_FORMAT),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            PfcLegend(null)
+        }
+    }
+}
+
+@Composable
+private fun PfcStackedBar(balance: PfcBalance, modifier: Modifier = Modifier) {
+    val segments = pfcSegments(balance)
+    Row(
+        modifier
+            .fillMaxWidth()
+            .height(14.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+    ) {
+        if (segments.isEmpty()) {
+            Box(Modifier.fillMaxWidth().fillMaxHeight())
+        } else {
+            segments.forEach { segment ->
+                Box(
+                    Modifier
+                        .weight(segment.fraction)
+                        .fillMaxHeight()
+                        .background(segment.color),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PfcVerticalBar(balance: PfcBalance?, modifier: Modifier = Modifier) {
+    val segments = balance?.let { pfcSegments(it) }.orEmpty()
+    Column(
+        modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        verticalArrangement = Arrangement.Bottom,
+    ) {
+        if (segments.isEmpty()) {
+            Box(Modifier.fillMaxWidth().fillMaxHeight())
+        } else {
+            segments.asReversed().forEach { segment ->
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(segment.fraction)
+                        .background(segment.color),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PfcLegend(balance: PfcBalance?) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        PfcLegendItem("P", ProteinBarColor, balance?.proteinEnergyPercent)
+        PfcLegendItem("F", FatBarColor, balance?.fatEnergyPercent)
+        PfcLegendItem("C", CarbBarColor, balance?.carbohydrateEnergyPercent)
+    }
+}
+
+@Composable
+private fun PfcLegendItem(label: String, color: Color, percent: Double?) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(8.dp).clip(RoundedCornerShape(2.dp)).background(color),
+        )
+        Text(
+            percent?.let { "$label ${DecimalFormat("0").format(it)}%" } ?: label,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    }
+}
+
+@Composable
+private fun PfcVerdictChip(balance: PfcBalance) {
+    val colors = when (balance.verdict) {
+        PfcVerdict.ON_TARGET -> CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        )
+        PfcVerdict.WATCH -> CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        )
+        PfcVerdict.HOLD -> CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    Card(colors = colors) {
+        Text(
+            balance.label,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+private data class PfcSegment(val fraction: Float, val color: Color)
+
+private fun pfcSegments(balance: PfcBalance): List<PfcSegment> {
+    val parts = listOfNotNull(
+        balance.proteinEnergyPercent?.let { it.toFloat() to ProteinBarColor },
+        balance.fatEnergyPercent?.let { it.toFloat() to FatBarColor },
+        balance.carbohydrateEnergyPercent?.let { it.toFloat() to CarbBarColor },
+    ).filter { it.first > 0f }
+    val total = parts.sumOf { it.first.toDouble() }.toFloat()
+    if (total <= 0f) return emptyList()
+    return parts.map { PfcSegment(it.first / total, it.second) }
+}
+
+private fun DailyHealthSummaryEntity.pfcBalance(): PfcBalance =
+    PfcBalance.from(intakeCaloriesKcal, proteinGrams, totalFatGrams, carbohydrateGrams)
+
+private fun NutritionMealEntity.pfcBalance(): PfcBalance =
+    PfcBalance.from(intakeCaloriesKcal, proteinGrams, totalFatGrams, carbohydrateGrams)
 
 @Composable
 private fun EmptyCard(title: String, description: String, action: (() -> Unit)? = null) {

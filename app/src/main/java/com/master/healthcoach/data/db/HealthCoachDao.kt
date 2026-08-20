@@ -21,6 +21,9 @@ interface HealthCoachDao {
     suspend fun upsertExerciseSessions(items: List<ExerciseSessionEntity>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertNutritionMeals(items: List<NutritionMealEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertGoal(goal: GoalEntity)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -43,6 +46,9 @@ interface HealthCoachDao {
 
     @Query("SELECT * FROM exercise_sessions ORDER BY startEpochMillis DESC LIMIT :limit")
     fun observeExerciseSessions(limit: Int = 365): Flow<List<ExerciseSessionEntity>>
+
+    @Query("SELECT * FROM nutrition_meals ORDER BY startEpochMillis DESC LIMIT :limit")
+    fun observeNutritionMeals(limit: Int = 2000): Flow<List<NutritionMealEntity>>
 
     @Query("SELECT * FROM exercise_sessions WHERE startEpochMillis BETWEEN :from AND :to ORDER BY startEpochMillis")
     suspend fun getExerciseSessions(from: Long, to: Long): List<ExerciseSessionEntity>
@@ -73,6 +79,12 @@ interface HealthCoachDao {
             "WHERE startEpochMillis >= :from AND startEpochMillis < :toExclusive",
     )
     suspend fun deleteExerciseSessionsInRange(from: Long, toExclusive: Long)
+
+    @Query(
+        "DELETE FROM nutrition_meals " +
+            "WHERE startEpochMillis >= :from AND startEpochMillis < :toExclusive",
+    )
+    suspend fun deleteNutritionMealsInRange(from: Long, toExclusive: Long)
 
     @Query("SELECT * FROM chat_messages ORDER BY id DESC LIMIT :limit")
     fun observeRecentMessages(limit: Int): Flow<List<ChatMessageEntity>>
@@ -109,6 +121,9 @@ interface HealthCoachDao {
 
     @Query("DELETE FROM exercise_sessions")
     suspend fun clearExerciseSessions()
+
+    @Query("DELETE FROM nutrition_meals")
+    suspend fun clearNutritionMeals()
 
     @Query("DELETE FROM goals")
     suspend fun clearGoals()

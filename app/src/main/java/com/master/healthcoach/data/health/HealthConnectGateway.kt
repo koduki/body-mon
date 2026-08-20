@@ -25,8 +25,11 @@ import com.master.healthcoach.data.db.BodyCompositionEntity
 import com.master.healthcoach.data.db.DailyHealthSummaryEntity
 import com.master.healthcoach.data.db.ExerciseSessionEntity
 import com.master.healthcoach.data.db.HealthSourceStatusEntity
+import com.master.healthcoach.data.db.NutritionMealEntity
 import com.master.healthcoach.domain.BodyCompositionCalculator
 import com.master.healthcoach.domain.NutritionInterval
+import com.master.healthcoach.domain.NutritionMealClusterer
+import com.master.healthcoach.domain.NutritionRecordSnapshot
 import com.master.healthcoach.domain.NutritionWriteShape
 import com.master.healthcoach.domain.TimedMeasurement
 import java.time.Duration
@@ -40,6 +43,7 @@ data class HealthSyncBundle(
     val body: List<BodyCompositionEntity>,
     val sources: List<HealthSourceStatusEntity>,
     val exerciseSessions: List<ExerciseSessionEntity>,
+    val nutritionMeals: List<NutritionMealEntity>,
     val rangeStartEpochMillis: Long,
     val rangeEndEpochMillisExclusive: Long,
 )
@@ -183,6 +187,22 @@ class HealthConnectGateway(private val context: Context) {
             start,
             end,
         )
+        val nutritionMeals = NutritionMealClusterer.cluster(
+            nutritionRecords.map { record ->
+                NutritionRecordSnapshot(
+                    startEpochMillis = record.startTime.toEpochMilli(),
+                    endEpochMillis = record.endTime.toEpochMilli(),
+                    mealType = record.mealType,
+                    energyKcal = record.energy?.inKilocalories,
+                    proteinGrams = record.protein?.inGrams,
+                    fatGrams = record.totalFat?.inGrams,
+                    carbohydrateGrams = record.totalCarbohydrate?.inGrams,
+                    origin = record.metadata.dataOrigin.packageName,
+                )
+            },
+            zoneId,
+        )
+        val mealsByDate = nutritionMeals.groupBy { it.date }
 
         val daily = (0 until days).map { offset ->
             val date = startDate.plusDays(offset)
@@ -282,6 +302,7 @@ class HealthConnectGateway(private val context: Context) {
                 proteinGrams = result[NutritionRecord.PROTEIN_TOTAL]?.inGrams,
                 totalFatGrams = result[NutritionRecord.TOTAL_FAT_TOTAL]?.inGrams,
                 carbohydrateGrams = result[NutritionRecord.TOTAL_CARBOHYDRATE_TOTAL]?.inGrams,
+                mealCount = mealsByDate[date.toString()]?.size ?: 0,
                 dataOrigins = origins,
                 updatedAtEpochMillis = System.currentTimeMillis(),
             )
@@ -411,12 +432,29 @@ class HealthConnectGateway(private val context: Context) {
                 dataOrigin = origin,
             )
         }
+        val mealEntities = nutritionMeals.mapIndexed { index, meal ->
+            NutritionMealEntity(
+                recordId = "${meal.date}:${meal.startEpochMillis}:${meal.endEpochMillis}:$index",
+                date = meal.date,
+                startEpochMillis = meal.startEpochMillis,
+                endEpochMillis = meal.endEpochMillis,
+                mealLabel = meal.mealLabel,
+                mealType = meal.mealType,
+                intakeCaloriesKcal = meal.energyKcal,
+                proteinGrams = meal.proteinGrams,
+                totalFatGrams = meal.fatGrams,
+                carbohydrateGrams = meal.carbohydrateGrams,
+                recordCount = meal.recordCount,
+                dataOrigin = meal.origin,
+            )
+        }
 
         return HealthSyncBundle(
             daily = daily,
             body = body,
             sources = sources,
             exerciseSessions = exerciseSessions,
+            nutritionMeals = mealEntities,
             rangeStartEpochMillis = start.toEpochMilli(),
             rangeEndEpochMillisExclusive = end.toEpochMilli(),
         )

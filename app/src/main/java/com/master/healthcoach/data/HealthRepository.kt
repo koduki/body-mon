@@ -9,6 +9,7 @@ import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.data.db.ExerciseSessionEntity
 import com.master.healthcoach.data.db.HealthCoachDatabase
 import com.master.healthcoach.data.db.HealthSourceStatusEntity
+import com.master.healthcoach.data.db.NutritionMealEntity
 import com.master.healthcoach.data.db.WeeklyReportEntity
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.data.health.HealthConnectGateway
@@ -31,6 +32,7 @@ class HealthRepository(
     val body: Flow<List<BodyCompositionEntity>> = dao.observeBody()
     val sources: Flow<List<HealthSourceStatusEntity>> = dao.observeSources()
     val exerciseSessions: Flow<List<ExerciseSessionEntity>> = dao.observeExerciseSessions()
+    val nutritionMeals: Flow<List<NutritionMealEntity>> = dao.observeNutritionMeals()
     val goal: Flow<GoalEntity?> = dao.observeGoal()
     val latestWeekly: Flow<WeeklyReportEntity?> = dao.observeLatestWeekly()
     val messages: Flow<List<ChatMessageEntity>> =
@@ -64,6 +66,11 @@ class HealthRepository(
                 bundle.rangeEndEpochMillisExclusive,
             )
             dao.upsertExerciseSessions(bundle.exerciseSessions)
+            dao.deleteNutritionMealsInRange(
+                bundle.rangeStartEpochMillis,
+                bundle.rangeEndEpochMillisExclusive,
+            )
+            dao.upsertNutritionMeals(bundle.nutritionMeals)
         }
         return rebuildWeekly()
     }
@@ -160,6 +167,7 @@ class HealthRepository(
             dao.clearBody()
             dao.clearSources()
             dao.clearExerciseSessions()
+            dao.clearNutritionMeals()
             dao.clearGoals()
             dao.clearWeekly()
             dao.clearMessages()
