@@ -76,12 +76,24 @@ class HealthChatCoordinator(
         val snapshot = json.decodeFromString<WeeklySnapshot>(report.snapshotJson)
         val goal = repository.getGoal()
         val prompt = buildString {
-            appendLine("次の週次健康サマリを分析してください。")
+            appendLine("次の週次健康サマリを、低脂質ダイエットの方針で分析してください。")
             appendLine(
                 snapshot.existingAiContract().toString(),
             )
+            appendLine(
+                "PFC週平均: たんぱく質=" +
+                    "${snapshot.proteinDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
+                    "(${snapshot.proteinEnergyPercent.energyRatio()}), " +
+                    "脂質=${snapshot.totalFatDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
+                    "(${snapshot.fatEnergyPercent.energyRatio()}), " +
+                    "炭水化物=${snapshot.carbohydrateDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
+                    "(${snapshot.carbohydrateEnergyPercent.energyRatio()})",
+            )
             appendLine("目標: ${goal?.existingAiGoal()}")
             appendLine("会話から確認済みの習慣: ${repository.getMemory()?.summary.orEmpty()}")
+            appendLine("summaryとcautionにPFCのグラムとエネルギー比を含めてください。")
+            appendLine("食事内容、運動量、摂取と活動のバランス、PFCの観点から助言してください。")
+            appendLine("不明点は断定せず、clarifyingQuestionsへ先に確認したい質問を最大2件入れてください。")
             appendLine("習慣と数値の関連は、根拠がある範囲だけhabitInsightsへ最大3件示してください。")
         }
         val raw = gemini.generateStructuredAdvice(
@@ -128,8 +140,12 @@ class HealthChatCoordinator(
         除脂肪量は筋肉量そのものではなく、筋肉維持の参考指標として扱ってください。
         医療診断、疾病の推測、服薬指示、極端な食事制限は行いません。
         食事記録がある日は、提供された摂取カロリーとPFCを観測値として扱います。
+        週報分析ではPFCのグラムとエネルギー比を必ず明示してください。
+        助言は低脂質ダイエットの方針で、食事内容、運動量、摂取と活動のバランス、
+        PFCの観点から行います。
         欠測日を0kcalとせず、消費カロリーから摂取量や赤字量を逆算しません。
         推定エネルギー収支は参考であり、減量成否の断定には使いません。
+        不明点は断定せず、先に確認質問を最大2件出してください。
         データ不足時は限界を明示し、行動案は最大2つに絞ります。
         会話メモリーは利用者が話した確認済みの習慣・制約です。数値との因果関係を
         推測せず、関連を述べる場合は観測事実と仮説を分けてください。
@@ -232,4 +248,10 @@ internal fun WeeklySnapshot.existingAiContract(): JsonObject = buildJsonObject {
     previousWeekCarbohydrateDailyAverageGrams?.let {
         put("previousWeekCarbohydrateDailyAverageGrams", it)
     }
+    proteinEnergyPercent?.let { put("proteinEnergyPercent", it) }
+    fatEnergyPercent?.let { put("fatEnergyPercent", it) }
+    carbohydrateEnergyPercent?.let { put("carbohydrateEnergyPercent", it) }
 }
+
+private fun Double?.energyRatio(): String =
+    this?.let { String.format(java.util.Locale.ROOT, "%.0f%%", it) } ?: "未取得"

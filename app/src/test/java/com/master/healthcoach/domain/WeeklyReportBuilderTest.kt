@@ -70,6 +70,9 @@ class WeeklyReportBuilderTest {
         assertEquals(220.0, report.carbohydrateDailyAverageGrams!!, 0.001)
         assertEquals(7, report.nutritionMeasurementDays)
         assertEquals(-100.0, report.estimatedEnergyBalanceDailyAverage!!, 0.001)
+        assertEquals(26.0, report.proteinEnergyPercent!!, 0.001)
+        assertEquals(27.0, report.fatEnergyPercent!!, 0.001)
+        assertEquals(44.0, report.carbohydrateEnergyPercent!!, 0.001)
         assertTrue(report.dataLimitations.isEmpty())
     }
 

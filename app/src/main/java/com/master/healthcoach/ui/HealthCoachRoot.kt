@@ -98,6 +98,7 @@ import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.domain.TrendMath
+import com.master.healthcoach.domain.WeeklySnapshot
 import java.text.DecimalFormat
 import java.time.Instant
 import java.time.LocalDate
@@ -1327,6 +1328,16 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                         )
+                        Text(
+                            "PFCエネルギー比 ${pfcEnergyRatio(report)}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            "低脂質の運用目安は脂質15〜25%。グラムとエネルギー比の両方で見ます。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
                                 title = "摂取カロリー",
@@ -1342,10 +1353,11 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             ReportTile(
                                 title = "たんぱく質",
                                 mainValue = report.proteinDailyAverageGrams.grams("/日"),
-                                subValue = compareDiff(
-                                    report.proteinDailyAverageGrams,
-                                    report.previousWeekProteinDailyAverageGrams,
-                                )?.let { "前週比 ${signed(it)} g" }
+                                subValue = report.proteinEnergyPercent.energyPercentLabel()
+                                    ?: compareDiff(
+                                        report.proteinDailyAverageGrams,
+                                        report.previousWeekProteinDailyAverageGrams,
+                                    )?.let { "前週比 ${signed(it)} g" }
                                     ?: "あすけん由来の記録",
                                 modifier = Modifier.weight(1f),
                             )
@@ -1354,20 +1366,22 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             ReportTile(
                                 title = "脂質",
                                 mainValue = report.totalFatDailyAverageGrams.grams("/日"),
-                                subValue = compareDiff(
-                                    report.totalFatDailyAverageGrams,
-                                    report.previousWeekTotalFatDailyAverageGrams,
-                                )?.let { "前週比 ${signed(it)} g" }
+                                subValue = report.fatEnergyPercent.energyPercentLabel()
+                                    ?: compareDiff(
+                                        report.totalFatDailyAverageGrams,
+                                        report.previousWeekTotalFatDailyAverageGrams,
+                                    )?.let { "前週比 ${signed(it)} g" }
                                     ?: "本日までの7日平均",
                                 modifier = Modifier.weight(1f),
                             )
                             ReportTile(
                                 title = "炭水化物",
                                 mainValue = report.carbohydrateDailyAverageGrams.grams("/日"),
-                                subValue = compareDiff(
-                                    report.carbohydrateDailyAverageGrams,
-                                    report.previousWeekCarbohydrateDailyAverageGrams,
-                                )?.let { "前週比 ${signed(it)} g" }
+                                subValue = report.carbohydrateEnergyPercent.energyPercentLabel()
+                                    ?: compareDiff(
+                                        report.carbohydrateDailyAverageGrams,
+                                        report.previousWeekCarbohydrateDailyAverageGrams,
+                                    )?.let { "前週比 ${signed(it)} g" }
                                     ?: "本日までの7日平均",
                                 modifier = Modifier.weight(1f),
                             )
@@ -1455,7 +1469,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
             item {
                 SectionHeader(
                     "専門コーチ分析",
-                    "端末内KPI判定とGeminiによる健康・習慣アドバイス",
+                    "低脂質ダイエットの観点で、食事・運動量・摂取バランス・PFCを確認",
                 )
             }
             item {
@@ -1468,6 +1482,12 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         if (advice.habitInsights.isNotEmpty()) {
                             Text("習慣との関連", fontWeight = FontWeight.SemiBold)
                             advice.habitInsights.forEach { Text("・$it") }
+                        }
+                        if (advice.clarifyingQuestions.isNotEmpty()) {
+                            Text("先に確認したいこと", fontWeight = FontWeight.SemiBold)
+                            advice.clarifyingQuestions.forEachIndexed { index, question ->
+                                Text("${index + 1}. $question")
+                            }
                         }
                         if (advice.nextActions.isNotEmpty()) {
                             Text("次の一手", fontWeight = FontWeight.SemiBold)
@@ -2250,6 +2270,18 @@ private fun leanTrendGuidance(trend: Double?): String = when {
 
 private fun Double?.signedOrMissing(unit: String): String =
     this?.let { "${signed(it)} $unit" } ?: "未取得"
+
+private fun pfcEnergyRatio(report: WeeklySnapshot): String {
+    val parts = listOfNotNull(
+        report.proteinEnergyPercent?.let { "P ${DecimalFormat("0").format(it)}%" },
+        report.fatEnergyPercent?.let { "F ${DecimalFormat("0").format(it)}%" },
+        report.carbohydrateEnergyPercent?.let { "C ${DecimalFormat("0").format(it)}%" },
+    )
+    return parts.joinToString(" ・ ").ifBlank { "未取得" }
+}
+
+private fun Double?.energyPercentLabel(): String? =
+    this?.let { "エネルギー比 ${DecimalFormat("0").format(it)}%" }
 
 private val TREND_DATE_FORMAT = DateTimeFormatter.ofPattern("M/d")
 private val TREND_DETAIL_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy/M/d (E)", Locale.JAPAN)

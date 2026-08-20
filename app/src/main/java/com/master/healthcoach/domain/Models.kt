@@ -75,6 +75,9 @@ data class WeeklySnapshot(
     val previousWeekTotalFatDailyAverageGrams: Double? = null,
     val previousWeekCarbohydrateDailyAverageGrams: Double? = null,
     val estimatedEnergyBalanceDailyAverage: Double? = null,
+    val proteinEnergyPercent: Double? = null,
+    val fatEnergyPercent: Double? = null,
+    val carbohydrateEnergyPercent: Double? = null,
 )
 
 @Serializable
@@ -86,6 +89,7 @@ data class AdviceResponse(
     val habitInsights: List<String> = emptyList(),
     val confidence: String = "medium",
     val dataLimitations: List<String> = emptyList(),
+    val clarifyingQuestions: List<String> = emptyList(),
 )
 
 data class BodyCalculation(

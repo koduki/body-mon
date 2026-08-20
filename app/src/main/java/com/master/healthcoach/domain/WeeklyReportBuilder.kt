@@ -115,6 +115,18 @@ object WeeklyReportBuilder {
         )
         val currentMvpaEquivalent = moderateEquivalentMinutes(currentDaily)
         val previousMvpaEquivalent = moderateEquivalentMinutes(previousDaily)
+        val intakeCaloriesAverage = averageDouble(
+            currentDaily.mapNotNull { it.intakeCaloriesKcal },
+        )
+        val proteinAverageGrams = averageDouble(
+            currentDaily.mapNotNull { it.proteinGrams },
+        )
+        val fatAverageGrams = averageDouble(
+            currentDaily.mapNotNull { it.totalFatGrams },
+        )
+        val carbohydrateAverageGrams = averageDouble(
+            currentDaily.mapNotNull { it.carbohydrateGrams },
+        )
 
         val limitations = buildList {
             if (currentBody.size < 3) {
@@ -238,18 +250,10 @@ object WeeklyReportBuilder {
             fatMassToGoalKg = fatMassToGoal,
             requiredFatLossKgPerWeek = requiredFatLoss,
             dietStartDate = goal?.dietStartDate,
-            intakeCaloriesDailyAverage = averageDouble(
-                currentDaily.mapNotNull { it.intakeCaloriesKcal },
-            ),
-            proteinDailyAverageGrams = averageDouble(
-                currentDaily.mapNotNull { it.proteinGrams },
-            ),
-            totalFatDailyAverageGrams = averageDouble(
-                currentDaily.mapNotNull { it.totalFatGrams },
-            ),
-            carbohydrateDailyAverageGrams = averageDouble(
-                currentDaily.mapNotNull { it.carbohydrateGrams },
-            ),
+            intakeCaloriesDailyAverage = intakeCaloriesAverage,
+            proteinDailyAverageGrams = proteinAverageGrams,
+            totalFatDailyAverageGrams = fatAverageGrams,
+            carbohydrateDailyAverageGrams = carbohydrateAverageGrams,
             nutritionMeasurementDays = currentDaily.count { it.intakeCaloriesKcal != null },
             previousWeekIntakeCaloriesDailyAverage = averageDouble(
                 previousDaily.mapNotNull { it.intakeCaloriesKcal },
@@ -265,6 +269,18 @@ object WeeklyReportBuilder {
             ),
             estimatedEnergyBalanceDailyAverage = averageDouble(
                 currentDaily.mapNotNull { it.estimatedEnergyBalanceKcal },
+            ),
+            proteinEnergyPercent = NutritionMacros.proteinEnergyPercent(
+                proteinGrams = proteinAverageGrams,
+                intakeKcal = intakeCaloriesAverage,
+            ),
+            fatEnergyPercent = NutritionMacros.fatEnergyPercent(
+                fatGrams = fatAverageGrams,
+                intakeKcal = intakeCaloriesAverage,
+            ),
+            carbohydrateEnergyPercent = NutritionMacros.carbohydrateEnergyPercent(
+                carbohydrateGrams = carbohydrateAverageGrams,
+                intakeKcal = intakeCaloriesAverage,
             ),
         )
     }

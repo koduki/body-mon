@@ -70,14 +70,22 @@ class HealthChatCoordinatorPayloadTest {
             nutritionMeasurementDays = 6,
             previousWeekIntakeCaloriesDailyAverage = 2_050.0,
             estimatedEnergyBalanceDailyAverage = -250.0,
+            proteinEnergyPercent = 25.3,
+            fatEnergyPercent = 26.1,
+            carbohydrateEnergyPercent = 44.2,
         )
 
         val payload = snapshot.existingAiContract().toString()
 
         assertTrue(payload.contains("\"intakeCaloriesDailyAverage\":1900.0"))
         assertTrue(payload.contains("\"proteinDailyAverageGrams\":120.0"))
+        assertTrue(payload.contains("\"totalFatDailyAverageGrams\":55.0"))
+        assertTrue(payload.contains("\"carbohydrateDailyAverageGrams\":210.0"))
         assertTrue(payload.contains("\"nutritionMeasurementDays\":6"))
         assertTrue(payload.contains("\"previousWeekIntakeCaloriesDailyAverage\":2050.0"))
+        assertTrue(payload.contains("\"proteinEnergyPercent\":25.3"))
+        assertTrue(payload.contains("\"fatEnergyPercent\":26.1"))
+        assertTrue(payload.contains("\"carbohydrateEnergyPercent\":44.2"))
         assertFalse(payload.contains("estimatedEnergyBalanceDailyAverage"))
         assertFalse(payload.contains("-250"))
     }

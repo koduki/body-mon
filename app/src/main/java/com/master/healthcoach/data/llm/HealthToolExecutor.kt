@@ -2,6 +2,7 @@ package com.master.healthcoach.data.llm
 
 import com.master.healthcoach.data.HealthRepository
 import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
+import com.master.healthcoach.domain.NutritionMacros
 import java.time.LocalDate
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -233,6 +234,10 @@ class HealthToolExecutor(private val repository: HealthRepository) {
         val (from, to) = range(call)
         val items = repository.getDaily(from, to)
         val measured = items.filter { it.intakeCaloriesKcal != null }
+        val intakeAverage = measured.mapNotNull { it.intakeCaloriesKcal }.averageOrNull()
+        val proteinAverage = items.mapNotNull { it.proteinGrams }.averageOrNull()
+        val fatAverage = items.mapNotNull { it.totalFatGrams }.averageOrNull()
+        val carbohydrateAverage = items.mapNotNull { it.carbohydrateGrams }.averageOrNull()
         return buildJsonObject {
             put("from", from.toString())
             put("to", to.toString())
@@ -241,23 +246,27 @@ class HealthToolExecutor(private val repository: HealthRepository) {
                 "sourceNote",
                 "あすけんからHealth Connectへ書き出されるのは摂取カロリー・たんぱく質・脂質・炭水化物。" +
                     "欠測日は0kcalとせず、未記録として扱う。" +
-                    "推定エネルギー収支は摂取−基礎代謝−活動消費で、デバイス推定のため参考値。",
+                    "推定エネルギー収支は摂取−基礎代謝−活動消費で、デバイス推定のため参考値。" +
+                    "PFCエネルギー比は記録グラム×4/9/4kcalを摂取カロリーで割った参考値。",
+            )
+            number("intakeCaloriesDailyAverage", intakeAverage)
+            number("proteinDailyAverageGrams", proteinAverage)
+            number("totalFatDailyAverageGrams", fatAverage)
+            number("carbohydrateDailyAverageGrams", carbohydrateAverage)
+            number(
+                "proteinEnergyPercent",
+                NutritionMacros.proteinEnergyPercent(proteinAverage, intakeAverage),
             )
             number(
-                "intakeCaloriesDailyAverage",
-                measured.mapNotNull { it.intakeCaloriesKcal }.averageOrNull(),
+                "fatEnergyPercent",
+                NutritionMacros.fatEnergyPercent(fatAverage, intakeAverage),
             )
             number(
-                "proteinDailyAverageGrams",
-                items.mapNotNull { it.proteinGrams }.averageOrNull(),
-            )
-            number(
-                "totalFatDailyAverageGrams",
-                items.mapNotNull { it.totalFatGrams }.averageOrNull(),
-            )
-            number(
-                "carbohydrateDailyAverageGrams",
-                items.mapNotNull { it.carbohydrateGrams }.averageOrNull(),
+                "carbohydrateEnergyPercent",
+                NutritionMacros.carbohydrateEnergyPercent(
+                    carbohydrateAverage,
+                    intakeAverage,
+                ),
             )
             put("daily", buildJsonArray {
                 measured.forEach { item ->

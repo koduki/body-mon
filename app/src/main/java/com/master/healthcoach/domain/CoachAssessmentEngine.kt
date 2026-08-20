@@ -309,21 +309,56 @@ object CoachAssessmentEngine {
         ) {
             return
         }
-        val protein = snapshot.proteinDailyAverageGrams ?: return
-        val weight = snapshot.currentWeightMedianKg ?: return
-        if (weight <= 0) return
-        val proteinPerKg = protein / weight
-        if (proteinPerKg < BodyRecompositionCoachPolicy.PROTEIN_PER_KG_CAUTION) {
-            add(
+        val protein = snapshot.proteinDailyAverageGrams
+        val weight = snapshot.currentWeightMedianKg
+        if (protein != null && weight != null && weight > 0) {
+            val proteinPerKg = protein / weight
+            if (proteinPerKg < BodyRecompositionCoachPolicy.PROTEIN_PER_KG_CAUTION) {
+                add(
+                    CoachSignal(
+                        code = "PROTEIN_INTAKE_LOW",
+                        level = CoachSignalLevel.CAUTION,
+                        title = "たんぱく質の記録が少なめ",
+                        evidence = "食事記録の平均は${protein.grams()}、" +
+                            "体重1kgあたり${proteinPerKg.grams()}/日です。" +
+                            "未記録の食事は含みません",
+                        action = "減量を強める前に、記録済みのたんぱく質が食事の中心になっているか確認する",
+                        priority = 58,
+                    ),
+                )
+            }
+        }
+        val fatShare = snapshot.fatEnergyPercent ?: return
+        val formattedShare = String.format(Locale.ROOT, "%.0f", fatShare)
+        when {
+            fatShare >= BodyRecompositionCoachPolicy.FAT_ENERGY_CAUTION_PERCENT -> add(
                 CoachSignal(
-                    code = "PROTEIN_INTAKE_LOW",
+                    code = "FAT_SHARE_HIGH",
                     level = CoachSignalLevel.CAUTION,
-                    title = "たんぱく質の記録が少なめ",
-                    evidence = "食事記録の平均は${protein.grams()}、" +
-                        "体重1kgあたり${proteinPerKg.grams()}/日です。" +
-                        "未記録の食事は含みません",
-                    action = "減量を強める前に、記録済みのたんぱく質が食事の中心になっているか確認する",
-                    priority = 58,
+                    title = "脂質のエネルギー比が高め",
+                    evidence = "記録上の脂質はエネルギー比$formattedShare%です。" +
+                        "低脂質の運用目安は15〜25%です",
+                    action = "調理油・ドレッシング・間食など、脂質の出どころを確認してから量を調整する",
+                    priority = 62,
+                ),
+            )
+            fatShare in BodyRecompositionCoachPolicy.FAT_ENERGY_TARGET_MIN_PERCENT..BodyRecompositionCoachPolicy.FAT_ENERGY_TARGET_MAX_PERCENT -> add(
+                CoachSignal(
+                    code = "FAT_SHARE_ON_TARGET",
+                    level = CoachSignalLevel.POSITIVE,
+                    title = "脂質比は低脂質の目安内",
+                    evidence = "記録上の脂質はエネルギー比$formattedShare%です",
+                    priority = 48,
+                ),
+            )
+            fatShare < BodyRecompositionCoachPolicy.FAT_ENERGY_TARGET_MIN_PERCENT -> add(
+                CoachSignal(
+                    code = "FAT_SHARE_VERY_LOW",
+                    level = CoachSignalLevel.INFORMATION,
+                    title = "脂質比はかなり低め",
+                    evidence = "記録上の脂質はエネルギー比$formattedShare%です。" +
+                        "必須脂肪酸まで落とす必要はありません",
+                    priority = 35,
                 ),
             )
         }
@@ -370,7 +405,7 @@ object CoachAssessmentEngine {
 }
 
 object BodyRecompositionCoachPolicy {
-    const val VERSION = "2026-08-20"
+    const val VERSION = "2026-08-20-lowfat"
     const val MAX_ACTIONS = 2
     const val TARGET_LOSS_RATE_MIN_PERCENT = 0.3
     const val TARGET_LOSS_RATE_MAX_PERCENT = 0.7
@@ -385,11 +420,19 @@ object BodyRecompositionCoachPolicy {
     const val SLEEP_HEART_RATE_CAUTION_BPM = 5
     const val MIN_NUTRITION_MEASUREMENT_DAYS = 5
     const val PROTEIN_PER_KG_CAUTION = 1.6
+    const val FAT_ENERGY_TARGET_MIN_PERCENT = 15.0
+    const val FAT_ENERGY_TARGET_MAX_PERCENT = 25.0
+    const val FAT_ENERGY_CAUTION_PERCENT = 30.0
 
     val systemInstruction: String = """
         専門家としての優先順位は、体重を速く落とすことではなく、筋力と回復を守りながら
-        脂肪を減らすことです。観測事実、解釈、提案を混同しないでください。
+        脂肪を減らすことです。このアプリの食事方針は低脂質ダイエットです。
+        助言は食事内容、運動量、摂取カロリーと消費のバランス、PFC（グラムとエネルギー比）
+        の観点から行ってください。観測事実、解釈、提案を混同しないでください。
         0.3〜0.7%体重/週はこのアプリの保守的な運用目安で、医学的な普遍閾値ではありません。
+        脂質エネルギー比は15〜25%を低脂質の運用目安とし、30%超は出どころを確認します。
+        たんぱく質は減量中の筋力維持のため、体重1kgあたり1.6gを下回らないか確認します。
+        極端な脂質カット、摂取ゼロ、医療的な治療食は提案しません。
         Health Connectの「その他のワークアウト」は、朝の5分ルーティンとして扱います。
         軽い筋トレと有酸素運動の両方として評価しますが、実施日数は筋トレ日数ではなく
         朝トレ習慣KPIに使い、筋力維持の証明にはしません。筋力は月1回のパーソナルで
@@ -398,6 +441,8 @@ object BodyRecompositionCoachPolicy {
         活動消費カロリーや基礎代謝から、摂取量やカロリー赤字を逆算しません。
         Health Connectの栄養記録がある日だけ、摂取カロリーとPFCを観測値として扱います。
         欠測日を0kcalとせず、推定エネルギー収支は参考値であり減量成否の判定には使いません。
+        未記録の食事、調味・調理油、間食、飲酒、運動量の内訳など、不明点は断定せず、
+        先に確認質問を最大2件出してください。十分な情報が揃ってから行動提案を出します。
         データが不足・矛盾する場合は結論を保留し、追加で確認すべき情報を示してください。
         行動提案は、効果が高く実行しやすい順に最大2つへ絞ってください。
     """.trimIndent()
