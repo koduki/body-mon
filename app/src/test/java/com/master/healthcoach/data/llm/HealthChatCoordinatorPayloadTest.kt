@@ -46,6 +46,43 @@ class HealthChatCoordinatorPayloadTest {
     }
 
     @Test
+    fun `nutrition totals are included while estimated energy balance stays on device`() {
+        val snapshot = WeeklySnapshot(
+            weekStart = "2026-07-24",
+            weekEnd = "2026-07-30",
+            fatMassChangeKg = -0.2,
+            leanMassChangeKg = 0.0,
+            weightChangeKg = -0.3,
+            bodyMeasurementDays = 7,
+            stepsDailyAverage = 8_000,
+            activeCaloriesDailyAverage = 400.0,
+            exerciseSessions = 6,
+            exerciseMinutes = 60,
+            strengthMinutes = 60,
+            cardioMinutes = 0,
+            previousWeekStepsDailyAverage = 7_500,
+            previousWeekActiveCaloriesDailyAverage = 380.0,
+            dataLimitations = emptyList(),
+            intakeCaloriesDailyAverage = 1_900.0,
+            proteinDailyAverageGrams = 120.0,
+            totalFatDailyAverageGrams = 55.0,
+            carbohydrateDailyAverageGrams = 210.0,
+            nutritionMeasurementDays = 6,
+            previousWeekIntakeCaloriesDailyAverage = 2_050.0,
+            estimatedEnergyBalanceDailyAverage = -250.0,
+        )
+
+        val payload = snapshot.existingAiContract().toString()
+
+        assertTrue(payload.contains("\"intakeCaloriesDailyAverage\":1900.0"))
+        assertTrue(payload.contains("\"proteinDailyAverageGrams\":120.0"))
+        assertTrue(payload.contains("\"nutritionMeasurementDays\":6"))
+        assertTrue(payload.contains("\"previousWeekIntakeCaloriesDailyAverage\":2050.0"))
+        assertFalse(payload.contains("estimatedEnergyBalanceDailyAverage"))
+        assertFalse(payload.contains("-250"))
+    }
+
+    @Test
     fun `diet start date is excluded from Gemini profile`() {
         val goal = GoalEntity(
             age = 40,

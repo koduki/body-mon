@@ -1,6 +1,7 @@
 package com.master.healthcoach.data.llm
 
 import com.master.healthcoach.data.HealthRepository
+import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
 import java.time.LocalDate
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -21,6 +22,7 @@ class HealthToolExecutor(private val repository: HealthRepository) {
         "get_heart_rate_summary" -> heartRate(call)
         "get_activity_intensity_summary" -> intensity(call)
         "get_metabolism_summary" -> metabolism(call)
+        "get_nutrition_summary" -> nutrition(call)
         "get_goal_progress" -> goals()
         else -> buildJsonObject { put("error", "未対応の関数: ${call.name}") }
     }
@@ -221,6 +223,54 @@ class HealthToolExecutor(private val repository: HealthRepository) {
                     add(buildJsonObject {
                         put("date", item.date)
                         number("basalCaloriesKcal", item.basalCaloriesKcal)
+                    })
+                }
+            })
+        }
+    }
+
+    private suspend fun nutrition(call: GeminiFunctionCall): JsonElement {
+        val (from, to) = range(call)
+        val items = repository.getDaily(from, to)
+        val measured = items.filter { it.intakeCaloriesKcal != null }
+        return buildJsonObject {
+            put("from", from.toString())
+            put("to", to.toString())
+            put("measurementDays", measured.size)
+            put(
+                "sourceNote",
+                "あすけんからHealth Connectへ書き出されるのは摂取カロリー・たんぱく質・脂質・炭水化物。" +
+                    "欠測日は0kcalとせず、未記録として扱う。" +
+                    "推定エネルギー収支は摂取−基礎代謝−活動消費で、デバイス推定のため参考値。",
+            )
+            number(
+                "intakeCaloriesDailyAverage",
+                measured.mapNotNull { it.intakeCaloriesKcal }.averageOrNull(),
+            )
+            number(
+                "proteinDailyAverageGrams",
+                items.mapNotNull { it.proteinGrams }.averageOrNull(),
+            )
+            number(
+                "totalFatDailyAverageGrams",
+                items.mapNotNull { it.totalFatGrams }.averageOrNull(),
+            )
+            number(
+                "carbohydrateDailyAverageGrams",
+                items.mapNotNull { it.carbohydrateGrams }.averageOrNull(),
+            )
+            put("daily", buildJsonArray {
+                measured.forEach { item ->
+                    add(buildJsonObject {
+                        put("date", item.date)
+                        number("intakeCaloriesKcal", item.intakeCaloriesKcal)
+                        number("proteinGrams", item.proteinGrams)
+                        number("totalFatGrams", item.totalFatGrams)
+                        number("carbohydrateGrams", item.carbohydrateGrams)
+                        number(
+                            "estimatedEnergyBalanceKcal",
+                            item.estimatedEnergyBalanceKcal,
+                        )
                     })
                 }
             })

@@ -46,6 +46,7 @@ object CoachAssessmentEngine {
             addMorningRoutineSignal(snapshot)
             addRecoverySignal(snapshot)
             addActivitySignal(snapshot)
+            addNutritionSignal(snapshot)
         }
         val limitations = buildList<String> {
             addAll(snapshot.dataLimitations)
@@ -299,6 +300,35 @@ object CoachAssessmentEngine {
         }
     }
 
+    private fun MutableList<CoachSignal>.addNutritionSignal(
+        snapshot: WeeklySnapshot,
+    ) {
+        if (
+            snapshot.nutritionMeasurementDays <
+            BodyRecompositionCoachPolicy.MIN_NUTRITION_MEASUREMENT_DAYS
+        ) {
+            return
+        }
+        val protein = snapshot.proteinDailyAverageGrams ?: return
+        val weight = snapshot.currentWeightMedianKg ?: return
+        if (weight <= 0) return
+        val proteinPerKg = protein / weight
+        if (proteinPerKg < BodyRecompositionCoachPolicy.PROTEIN_PER_KG_CAUTION) {
+            add(
+                CoachSignal(
+                    code = "PROTEIN_INTAKE_LOW",
+                    level = CoachSignalLevel.CAUTION,
+                    title = "たんぱく質の記録が少なめ",
+                    evidence = "食事記録の平均は${protein.grams()}、" +
+                        "体重1kgあたり${proteinPerKg.grams()}/日です。" +
+                        "未記録の食事は含みません",
+                    action = "減量を強める前に、記録済みのたんぱく質が食事の中心になっているか確認する",
+                    priority = 58,
+                ),
+            )
+        }
+    }
+
     private fun verdict(
         signals: List<CoachSignal>,
         snapshot: WeeklySnapshot,
@@ -335,10 +365,12 @@ object CoachAssessmentEngine {
 
     private fun Double.kgPerWeek(): String =
         String.format(Locale.ROOT, "%+.2f kg/週", this)
+
+    private fun Double.grams(): String = String.format(Locale.ROOT, "%.1f g", this)
 }
 
 object BodyRecompositionCoachPolicy {
-    const val VERSION = "2026-08-01"
+    const val VERSION = "2026-08-20"
     const val MAX_ACTIONS = 2
     const val TARGET_LOSS_RATE_MIN_PERCENT = 0.3
     const val TARGET_LOSS_RATE_MAX_PERCENT = 0.7
@@ -351,6 +383,8 @@ object BodyRecompositionCoachPolicy {
     const val SLEEP_TARGET_DAYS_CAUTION_MAX = 3
     const val SLEEP_TARGET_DAYS_GOOD_MIN = 5
     const val SLEEP_HEART_RATE_CAUTION_BPM = 5
+    const val MIN_NUTRITION_MEASUREMENT_DAYS = 5
+    const val PROTEIN_PER_KG_CAUTION = 1.6
 
     val systemInstruction: String = """
         専門家としての優先順位は、体重を速く落とすことではなく、筋力と回復を守りながら
@@ -362,6 +396,8 @@ object BodyRecompositionCoachPolicy {
         同じ種目の重量・回数を比較して確認するよう案内してください。
         BIA由来の脂肪量・除脂肪量は28日傾向でも補助シグナルに限定し、筋肉増減を断定しません。
         活動消費カロリーや基礎代謝から、摂取量やカロリー赤字を逆算しません。
+        Health Connectの栄養記録がある日だけ、摂取カロリーとPFCを観測値として扱います。
+        欠測日を0kcalとせず、推定エネルギー収支は参考値であり減量成否の判定には使いません。
         データが不足・矛盾する場合は結論を保留し、追加で確認すべき情報を示してください。
         行動提案は、効果が高く実行しやすい順に最大2つへ絞ってください。
     """.trimIndent()

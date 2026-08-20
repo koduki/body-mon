@@ -3,6 +3,7 @@ package com.master.healthcoach.domain
 import com.master.healthcoach.data.db.BodyCompositionEntity
 import com.master.healthcoach.data.db.DailyHealthSummaryEntity
 import com.master.healthcoach.data.db.GoalEntity
+import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -141,6 +142,9 @@ object WeeklyReportBuilder {
             ) {
                 add("アクティビティ強度を取得できていません")
             }
+            if (currentDaily.count { it.intakeCaloriesKcal != null } < 5) {
+                add("食事記録（摂取カロリー）が5日未満です")
+            }
             if (measurementConsistency != null && measurementConsistency < 70) {
                 add("体組成の測定時刻がばらついています")
             }
@@ -234,6 +238,34 @@ object WeeklyReportBuilder {
             fatMassToGoalKg = fatMassToGoal,
             requiredFatLossKgPerWeek = requiredFatLoss,
             dietStartDate = goal?.dietStartDate,
+            intakeCaloriesDailyAverage = averageDouble(
+                currentDaily.mapNotNull { it.intakeCaloriesKcal },
+            ),
+            proteinDailyAverageGrams = averageDouble(
+                currentDaily.mapNotNull { it.proteinGrams },
+            ),
+            totalFatDailyAverageGrams = averageDouble(
+                currentDaily.mapNotNull { it.totalFatGrams },
+            ),
+            carbohydrateDailyAverageGrams = averageDouble(
+                currentDaily.mapNotNull { it.carbohydrateGrams },
+            ),
+            nutritionMeasurementDays = currentDaily.count { it.intakeCaloriesKcal != null },
+            previousWeekIntakeCaloriesDailyAverage = averageDouble(
+                previousDaily.mapNotNull { it.intakeCaloriesKcal },
+            ),
+            previousWeekProteinDailyAverageGrams = averageDouble(
+                previousDaily.mapNotNull { it.proteinGrams },
+            ),
+            previousWeekTotalFatDailyAverageGrams = averageDouble(
+                previousDaily.mapNotNull { it.totalFatGrams },
+            ),
+            previousWeekCarbohydrateDailyAverageGrams = averageDouble(
+                previousDaily.mapNotNull { it.carbohydrateGrams },
+            ),
+            estimatedEnergyBalanceDailyAverage = averageDouble(
+                currentDaily.mapNotNull { it.estimatedEnergyBalanceKcal },
+            ),
         )
     }
 

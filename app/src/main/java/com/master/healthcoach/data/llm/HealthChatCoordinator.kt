@@ -127,7 +127,9 @@ class HealthChatCoordinator(
         データなしで数値を推測しないでください。BIA体組成は水分等で変動するため、単日値を断定しません。
         除脂肪量は筋肉量そのものではなく、筋肉維持の参考指標として扱ってください。
         医療診断、疾病の推測、服薬指示、極端な食事制限は行いません。
-        食事記録はないため一般的な食事改善だけ提案でき、摂取カロリーや赤字量を断定しません。
+        食事記録がある日は、提供された摂取カロリーとPFCを観測値として扱います。
+        欠測日を0kcalとせず、消費カロリーから摂取量や赤字量を逆算しません。
+        推定エネルギー収支は参考であり、減量成否の断定には使いません。
         データ不足時は限界を明示し、行動案は最大2つに絞ります。
         会話メモリーは利用者が話した確認済みの習慣・制約です。数値との因果関係を
         推測せず、関連を述べる場合は観測事実と仮説を分けてください。
@@ -165,6 +167,8 @@ internal fun GoalEntity.existingAiGoal(): String =
 /**
  * Dashboard-only KPIs stay on device. Manual Gemini analysis keeps the pre-existing
  * weekly payload contract instead of silently expanding sensitive health-data egress.
+ * Health Connect nutrition totals are included because weekly AI analysis has no
+ * function calling; derived energy-balance KPIs remain on device.
  */
 internal fun WeeklySnapshot.existingAiContract(): JsonObject = buildJsonObject {
     put("weekStart", weekStart)
@@ -210,5 +214,22 @@ internal fun WeeklySnapshot.existingAiContract(): JsonObject = buildJsonObject {
     }
     previousWeekBasalCaloriesDailyAverage?.let {
         put("previousWeekBasalCaloriesDailyAverage", it)
+    }
+    intakeCaloriesDailyAverage?.let { put("intakeCaloriesDailyAverage", it) }
+    proteinDailyAverageGrams?.let { put("proteinDailyAverageGrams", it) }
+    totalFatDailyAverageGrams?.let { put("totalFatDailyAverageGrams", it) }
+    carbohydrateDailyAverageGrams?.let { put("carbohydrateDailyAverageGrams", it) }
+    put("nutritionMeasurementDays", nutritionMeasurementDays)
+    previousWeekIntakeCaloriesDailyAverage?.let {
+        put("previousWeekIntakeCaloriesDailyAverage", it)
+    }
+    previousWeekProteinDailyAverageGrams?.let {
+        put("previousWeekProteinDailyAverageGrams", it)
+    }
+    previousWeekTotalFatDailyAverageGrams?.let {
+        put("previousWeekTotalFatDailyAverageGrams", it)
+    }
+    previousWeekCarbohydrateDailyAverageGrams?.let {
+        put("previousWeekCarbohydrateDailyAverageGrams", it)
     }
 }

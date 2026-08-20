@@ -122,6 +122,28 @@ class CoachAssessmentEngineTest {
         assertFalse(chat.contains("dietStartDate"))
     }
 
+    @Test
+    fun `flags low recorded protein without treating missing meals as zero`() {
+        val assessment = CoachAssessmentEngine.assess(
+            snapshot(
+                weightLossRate = 0.5,
+                fatTrend = -0.3,
+                leanTrend = 0.0,
+                routineDays = 6,
+                routineAdherence = 86,
+                stepsBaseline = 102,
+                sleepTargetDays = 5,
+                currentWeightMedianKg = 80.0,
+                proteinDailyAverageGrams = 80.0,
+                nutritionMeasurementDays = 7,
+            ),
+        )
+
+        assertEquals(CoachVerdict.WATCH, assessment.verdict)
+        assertTrue(assessment.signals.any { it.code == "PROTEIN_INTAKE_LOW" })
+        assertTrue(assessment.nextActions.any { it.contains("たんぱく質") })
+    }
+
     private fun snapshot(
         weightLossRate: Double?,
         fatTrend: Double?,
@@ -133,6 +155,9 @@ class CoachAssessmentEngineTest {
         measurementConsistency: Int = 100,
         trendDays: Int = 28,
         bodyDays: Int = 7,
+        currentWeightMedianKg: Double? = null,
+        proteinDailyAverageGrams: Double? = null,
+        nutritionMeasurementDays: Int = 0,
     ) = WeeklySnapshot(
         weekStart = "2026-07-24",
         weekEnd = "2026-07-30",
@@ -163,5 +188,8 @@ class CoachAssessmentEngineTest {
         sleepTargetHitDays = sleepTargetDays,
         sleepHeartRateBaselineDeltaBpm = 0,
         measurementTimeConsistencyPercent = measurementConsistency,
+        currentWeightMedianKg = currentWeightMedianKg,
+        proteinDailyAverageGrams = proteinDailyAverageGrams,
+        nutritionMeasurementDays = nutritionMeasurementDays,
     )
 }

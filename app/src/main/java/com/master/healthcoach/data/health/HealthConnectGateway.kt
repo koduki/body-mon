@@ -13,6 +13,7 @@ import androidx.health.connect.client.records.BodyFatRecord
 import androidx.health.connect.client.records.DistanceRecord
 import androidx.health.connect.client.records.ExerciseSessionRecord
 import androidx.health.connect.client.records.HeartRateRecord
+import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.records.Record
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.StepsRecord
@@ -67,6 +68,8 @@ class HealthConnectGateway(private val context: Context) {
         HealthPermission.getReadPermission(BasalMetabolicRateRecord::class)
     private val activityIntensityPermission =
         HealthPermission.getReadPermission(ActivityIntensityRecord::class)
+    private val nutritionPermission =
+        HealthPermission.getReadPermission(NutritionRecord::class)
 
     fun availability(): HealthConnectAvailability = when (
         HealthConnectClient.getSdkStatus(context)
@@ -100,6 +103,7 @@ class HealthConnectGateway(private val context: Context) {
         add(sleepPermission)
         add(heartRatePermission)
         add(basalMetabolicRatePermission)
+        add(nutritionPermission)
         if (activityIntensityAvailable()) add(activityIntensityPermission)
         if (backgroundReadAvailable()) {
             add(HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND)
@@ -139,6 +143,7 @@ class HealthConnectGateway(private val context: Context) {
         val canReadBasalRate = basalMetabolicRatePermission in granted
         val intensitySupported = activityIntensityAvailable()
         val canReadIntensity = intensitySupported && activityIntensityPermission in granted
+        val canReadNutrition = nutritionPermission in granted
 
         val endDateExclusive = LocalDate.now(zoneId).plusDays(1)
         val startDate = endDateExclusive.minusDays(days)
@@ -171,6 +176,11 @@ class HealthConnectGateway(private val context: Context) {
             start,
             end,
         )
+        val nutritionRecords = readIfGranted<NutritionRecord>(
+            canReadNutrition,
+            start,
+            end,
+        )
 
         val daily = (0 until days).map { offset ->
             val date = startDate.plusDays(offset)
@@ -190,6 +200,7 @@ class HealthConnectGateway(private val context: Context) {
                 includeHeartRate = canReadHeartRate,
                 includeBasalRate = canReadBasalRate,
                 includeIntensity = canReadIntensity,
+                includeNutrition = canReadNutrition,
             )
             val sessions = exercises.filter { session ->
                 session.startTime >= dayStart && session.startTime < dayEnd
@@ -222,6 +233,9 @@ class HealthConnectGateway(private val context: Context) {
                 addAll(basalRateRecords.inDay(dayStart, dayEnd) { it.time }
                     .map { it.metadata.dataOrigin.packageName })
                 addAll(intensityRecords.filter {
+                    it.startTime < dayEnd && it.endTime > dayStart
+                }.map { it.metadata.dataOrigin.packageName })
+                addAll(nutritionRecords.filter {
                     it.startTime < dayEnd && it.endTime > dayStart
                 }.map { it.metadata.dataOrigin.packageName })
             }.distinct().sorted().joinToString(", ")
@@ -262,6 +276,10 @@ class HealthConnectGateway(private val context: Context) {
                 basalCaloriesKcal = result[
                     BasalMetabolicRateRecord.BASAL_CALORIES_TOTAL
                 ]?.inKilocalories,
+                intakeCaloriesKcal = result[NutritionRecord.ENERGY_TOTAL]?.inKilocalories,
+                proteinGrams = result[NutritionRecord.PROTEIN_TOTAL]?.inGrams,
+                totalFatGrams = result[NutritionRecord.TOTAL_FAT_TOTAL]?.inGrams,
+                carbohydrateGrams = result[NutritionRecord.TOTAL_CARBOHYDRATE_TOTAL]?.inGrams,
                 dataOrigins = origins,
                 updatedAtEpochMillis = System.currentTimeMillis(),
             )
@@ -366,6 +384,14 @@ class HealthConnectGateway(private val context: Context) {
                     else -> null
                 },
             ),
+            sourceStatus(
+                "栄養（摂取）",
+                nutritionRecords,
+                { it.startTime },
+                { it.metadata.dataOrigin.packageName },
+                checkedAt,
+                if (canReadNutrition) null else "権限なし",
+            ),
         )
 
         val exerciseSessions = exercises.map { session ->
@@ -399,6 +425,7 @@ class HealthConnectGateway(private val context: Context) {
         includeHeartRate: Boolean,
         includeBasalRate: Boolean,
         includeIntensity: Boolean,
+        includeNutrition: Boolean,
     ): AggregationResult {
         val metrics = buildSet<AggregateMetric<*>> {
             add(StepsRecord.COUNT_TOTAL)
@@ -416,6 +443,12 @@ class HealthConnectGateway(private val context: Context) {
             if (includeIntensity) {
                 add(ActivityIntensityRecord.MODERATE_DURATION_TOTAL)
                 add(ActivityIntensityRecord.VIGOROUS_DURATION_TOTAL)
+            }
+            if (includeNutrition) {
+                add(NutritionRecord.ENERGY_TOTAL)
+                add(NutritionRecord.PROTEIN_TOTAL)
+                add(NutritionRecord.TOTAL_FAT_TOTAL)
+                add(NutritionRecord.TOTAL_CARBOHYDRATE_TOTAL)
             }
         }
         return client.aggregate(
