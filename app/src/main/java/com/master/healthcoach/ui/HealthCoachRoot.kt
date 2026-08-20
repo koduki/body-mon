@@ -1707,7 +1707,7 @@ private fun SettingsScreen(
             Text("Health Connectの権限を管理")
         }
 
-        HorizontalDivider(modifier.padding(vertical = 8.dp))
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
         SectionHeader(
             "会話メモリー",
             "チャットは直近20件のみ表示します。それ以前の内容は習慣・制約の要約としてここに残ります",
