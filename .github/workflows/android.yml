@@ -5,19 +5,29 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: android-${{ github.ref }}
-  cancel-in-progress: true
+  # Do not interrupt signing/uploading a release. PR builds can still be cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test release tooling
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Determine app version
+        id: version
+        run: python3 .github/scripts/release.py version >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -25,6 +35,63 @@ jobs:
           cache: gradle
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK
-        run: sdkmanager "platforms;android-36"
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - name: Unit test and assemble
-        run: bash gradlew testDebugUnitTest assembleDebug
+        env:
+          APP_VERSION_CODE: ${{ steps.version.outputs.version_code }}
+          APP_VERSION_NAME: ${{ steps.version.outputs.version_name }}
+        run: bash gradlew testDebugUnitTest testReleaseUnitTest assembleDebug assembleRelease
+      - name: Smoke test signing with a disposable test key
+        env:
+          RELEASE_TEST_APK: app/build/outputs/apk/release/app-release-unsigned.apk
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+      - name: Upload unsigned release for the signing job
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-release-${{ github.run_id }}
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
+          retention-days: 3
+          overwrite: true
+
+  release:
+    needs: test
+    if: >-
+      github.repository == 'koduki/body-mon' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      vars.ANDROID_RELEASE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Install signing tools
+        run: sdkmanager "build-tools;36.0.0"
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-release-${{ github.run_id }}
+          path: ${{ runner.temp }}/unsigned-release
+      - name: Sign and verify APK
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: >-
+          python3 .github/scripts/release.py sign
+          "$RUNNER_TEMP/unsigned-release/app-release-unsigned.apk"
+          "$RUNNER_TEMP/signed-release"
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release.py publish "$RUNNER_TEMP/signed-release"
