@@ -101,6 +101,7 @@ import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.data.db.NutritionMealEntity
 import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
 import com.master.healthcoach.data.health.HealthConnectAvailability
+import com.master.healthcoach.domain.EnergyBalanceWeightAnalyzer
 import com.master.healthcoach.domain.PfcBalance
 import com.master.healthcoach.domain.PfcVerdict
 import com.master.healthcoach.domain.TrendMath
@@ -1069,7 +1070,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
         item {
             SectionHeader(
                 "週次ボディメイクレビュー",
-                "7日中央値と28日傾向で、脂肪減少と筋力維持の行動を確認",
+                "カロリー収支と体重推移を対照し、脂肪減少と筋力維持の行動を確認",
             )
         }
         if (report == null) {
@@ -1109,7 +1110,10 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
 
             item {
                 Card {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1151,20 +1155,117 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
+                                title = "体重 28日",
+                                mainValue = report.weightTrendKgPerWeek
+                                    .signedOrMissing("kg/週"),
+                                subValue = "ロバスト傾向",
+                                modifier = Modifier.weight(1f),
+                            )
+                            ReportTile(
                                 title = "脂肪量 28日",
                                 mainValue = report.fatMassTrendKgPerWeek
                                     .signedOrMissing("kg/週"),
                                 subValue = "BIAの長期傾向",
                                 modifier = Modifier.weight(1f),
                             )
+                        }
+                        ReportTile(
+                            title = "除脂肪量 28日",
+                            mainValue = report.leanMassTrendKgPerWeek
+                                .signedOrMissing("kg/週"),
+                            subValue = leanTrendGuidance(report.leanMassTrendKgPerWeek),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+
+            item {
+                val balanceAnalysis = EnergyBalanceWeightAnalyzer.analyze(report)
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (balanceAnalysis.isMismatch) {
+                            MaterialTheme.colorScheme.errorContainer
+                        } else {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        },
+                    ),
+                ) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            "カロリー収支と体重の対照",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            balanceAnalysis.title,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
-                                title = "除脂肪量 28日",
-                                mainValue = report.leanMassTrendKgPerWeek
-                                    .signedOrMissing("kg/週"),
-                                subValue = leanTrendGuidance(report.leanMassTrendKgPerWeek),
+                                title = "摂取",
+                                mainValue = balanceAnalysis.intakeDailyAverageKcal.kcal("/日"),
+                                subValue = "あすけん由来",
+                                icon = Icons.Default.Restaurant,
+                                modifier = Modifier.weight(1f),
+                            )
+                            ReportTile(
+                                title = "消費合計",
+                                mainValue = balanceAnalysis.expenditureDailyAverageKcal.kcal("/日"),
+                                subValue = "基礎+活動",
                                 modifier = Modifier.weight(1f),
                             )
                         }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ReportTile(
+                                title = "推定収支",
+                                mainValue = balanceAnalysis.estimatedBalanceDailyAverageKcal?.let {
+                                    "${signed(it)} kcal/日"
+                                } ?: "未取得",
+                                subValue = "デバイス推定・参考",
+                                modifier = Modifier.weight(1f),
+                            )
+                            ReportTile(
+                                title = "換算体重変化",
+                                mainValue = balanceAnalysis.impliedWeightChangeKgPerWeek
+                                    .signedOrMissing("kg/週"),
+                                subValue = "約7700kcal≒1kg",
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ReportTile(
+                                title = "実測の体重傾向",
+                                mainValue = (report.weightTrendKgPerWeek ?: report.weightChangeKg)
+                                    .signedOrMissing("kg/週"),
+                                subValue = if (report.weightTrendKgPerWeek != null) {
+                                    "28日ロバスト"
+                                } else {
+                                    "前週中央値比"
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            ReportTile(
+                                title = "差",
+                                mainValue = balanceAnalysis.gapKgPerWeek
+                                    .signedOrMissing("kg/週"),
+                                subValue = "換算−実測",
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        Text(
+                            balanceAnalysis.summary,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            balanceAnalysis.guidance,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }
@@ -1472,18 +1573,17 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
-                        Text("参考値", fontWeight = FontWeight.SemiBold)
+                        Text("参考値の内訳", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "活動消費 ${
-                                report.activeCaloriesDailyAverage.kcal("/日")
-                            }・基礎代謝 ${
+                            "基礎代謝 ${
                                 report.basalCaloriesDailyAverage.kcal("/日")
-                            }・摂取 ${
-                                report.intakeCaloriesDailyAverage.kcal("/日")
+                            }・活動消費 ${
+                                report.activeCaloriesDailyAverage.kcal("/日")
                             }",
                         )
                         Text(
-                            "デバイスの推定消費量と食事記録の差はエネルギー赤字の断定には使わず、" +
+                            "上の「カロリー収支と体重の対照」で摂取との差を見ます。" +
+                                "デバイス推定の差はエネルギー赤字の断定には使わず、" +
                                 "体重ペースと行動KPIで調整します。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1531,7 +1631,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
             item {
                 SectionHeader(
                     "専門コーチ分析",
-                    "低脂質ダイエットの観点で、食事・運動量・摂取バランス・PFCを確認",
+                    "カロリー収支の比較と体重推移を軸に、低脂質・PFCも確認",
                 )
             }
             item {
