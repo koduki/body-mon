@@ -5,6 +5,9 @@ local.properties
 *.iml
 *.apk
 *.aab
+*.jks
+*.keystore
+keystore.properties
+__pycache__/
 captures/
 .DS_Store
-

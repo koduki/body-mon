@@ -61,6 +61,22 @@ Health Connectに集約された体組成・活動・睡眠・心拍・基礎代
 
 生成APKは `app/build/outputs/apk/debug/app-debug.apk` に出力されます。
 
+## PC接続なしで更新する（GitHub Releases + Obtainium）
+
+初回設定後は、`main`へのマージでテスト・ビルド・署名を行い、
+[GitHub Releases](https://github.com/koduki/body-mon/releases)へAPKを自動公開します。
+スマホの[Obtainium](https://github.com/ImranR98/Obtainium)にこのリポジトリを登録すると、
+更新を検知し、Androidの条件を満たす場合はバックグラウンドでインストールします。
+PCとスマホを同じWi-Fiへ接続する必要はありません。
+
+**初回は既存アプリの署名鍵を確認してください。鍵が違うAPKは上書きできません。
+会話・目標・APIキーを守るため、アプリをアンインストールしないでください。**
+
+署名鍵・GitHub設定・Obtainium設定の手順は
+[`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md)を参照してください。
+配布は`ANDROID_RELEASE_ENABLED=true`にするまで無効です。
+アプリ内に更新SDKやクラウドDBは追加していません。
+
 ## Geminiの設定
 
 1. Google AI Studioで、この個人アプリ専用のAPIキーを作ります。

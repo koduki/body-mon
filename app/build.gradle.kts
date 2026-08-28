@@ -14,8 +14,13 @@ android {
         applicationId = "com.master.healthcoach"
         minSdk = 28
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI uses the same version for the APK and its GitHub Release tag.
+        // Local debug builds keep their existing defaults unless explicitly overridden.
+        versionCode = providers.environmentVariable("APP_VERSION_CODE")
+            .map { value ->
+                value.toInt().also { require(it in 1..2_100_000_000) }
+            }.getOrElse(1)
+        versionName = providers.environmentVariable("APP_VERSION_NAME").getOrElse("0.1.0")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
