@@ -43,6 +43,7 @@ object CoachAssessmentEngine {
             addMeasurementQualitySignal(snapshot)
             addWeightLossRateSignal(snapshot)
             addBodyCompositionSignal(snapshot)
+            addEnergyBalanceWeightSignal(snapshot)
             addMorningRoutineSignal(snapshot)
             addRecoverySignal(snapshot)
             addActivitySignal(snapshot)
@@ -173,6 +174,59 @@ object CoachAssessmentEngine {
                     title = "体組成の方向性は良好",
                     evidence = "BIA上は脂肪量が減少し、除脂肪量は維持方向です",
                     priority = 55,
+                ),
+            )
+        }
+    }
+
+    private fun MutableList<CoachSignal>.addEnergyBalanceWeightSignal(
+        snapshot: WeeklySnapshot,
+    ) {
+        val analysis = EnergyBalanceWeightAnalyzer.analyze(snapshot)
+        when (analysis.alignment) {
+            EnergyBalanceWeightAlignment.INSUFFICIENT_DATA -> Unit
+
+            EnergyBalanceWeightAlignment.ALIGNED_DEFICIT,
+            EnergyBalanceWeightAlignment.ALIGNED_STABLE,
+            -> add(
+                CoachSignal(
+                    code = "ENERGY_WEIGHT_ALIGNED",
+                    level = CoachSignalLevel.INFORMATION,
+                    title = analysis.title,
+                    evidence = analysis.summary,
+                    priority = 42,
+                ),
+            )
+
+            EnergyBalanceWeightAlignment.ALIGNED_SURPLUS -> add(
+                CoachSignal(
+                    code = "ENERGY_WEIGHT_ALIGNED_SURPLUS",
+                    level = CoachSignalLevel.INFORMATION,
+                    title = analysis.title,
+                    evidence = analysis.summary,
+                    priority = 44,
+                ),
+            )
+
+            EnergyBalanceWeightAlignment.MISMATCH_DEFICIT_WEIGHT_STABLE_OR_UP -> add(
+                CoachSignal(
+                    code = "ENERGY_WEIGHT_MISMATCH_DEFICIT",
+                    level = CoachSignalLevel.CAUTION,
+                    title = analysis.title,
+                    evidence = analysis.summary + "。推定収支は参考値です",
+                    action = analysis.guidance,
+                    priority = 55,
+                ),
+            )
+
+            EnergyBalanceWeightAlignment.MISMATCH_SURPLUS_WEIGHT_DOWN -> add(
+                CoachSignal(
+                    code = "ENERGY_WEIGHT_MISMATCH_SURPLUS",
+                    level = CoachSignalLevel.CAUTION,
+                    title = analysis.title,
+                    evidence = analysis.summary + "。推定収支は参考値です",
+                    action = analysis.guidance,
+                    priority = 52,
                 ),
             )
         }
@@ -405,7 +459,7 @@ object CoachAssessmentEngine {
 }
 
 object BodyRecompositionCoachPolicy {
-    const val VERSION = "2026-08-20-lowfat"
+    const val VERSION = "2026-08-28-energy-weight"
     const val MAX_ACTIONS = 2
     const val TARGET_LOSS_RATE_MIN_PERCENT = 0.3
     const val TARGET_LOSS_RATE_MAX_PERCENT = 0.7
@@ -442,6 +496,8 @@ object BodyRecompositionCoachPolicy {
         Health Connectの栄養記録がある日だけ、摂取カロリーとPFCを観測値として扱います。
         欠測日を0kcalとせず、食事回数はNutritionRecordのstart/endクラスタから数えます。
         推定エネルギー収支は参考値であり減量成否の判定には使いません。
+        摂取と活動消費・基礎代謝の比較、および体重の推移を必ず対照して述べてください。
+        収支と体重の方向が食い違う場合は、赤字の強化ではなく記録漏れ・測定条件・水分変動を疑います。
         未記録の食事、調味・調理油、間食、飲酒、運動量の内訳など、不明点は断定せず、
         先に確認質問を最大2件出してください。十分な情報が揃ってから行動提案を出します。
         データが不足・矛盾する場合は結論を保留し、追加で確認すべき情報を示してください。

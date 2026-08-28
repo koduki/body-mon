@@ -169,6 +169,60 @@ class CoachAssessmentEngineTest {
         assertTrue(assessment.nextActions.any { it.contains("脂質") })
     }
 
+    @Test
+    fun `compares calorie balance with weight trend without treating mismatch as adjust`() {
+        val assessment = CoachAssessmentEngine.assess(
+            snapshot(
+                weightLossRate = 0.2,
+                fatTrend = -0.1,
+                leanTrend = 0.0,
+                routineDays = 6,
+                routineAdherence = 86,
+                stepsBaseline = 102,
+                sleepTargetDays = 5,
+                weightTrendKgPerWeek = 0.05,
+                estimatedEnergyBalanceDailyAverage = -700.0,
+                nutritionMeasurementDays = 7,
+                intakeCaloriesDailyAverage = 1_350.0,
+                basalCaloriesDailyAverage = 1_600.0,
+                activeCaloriesDailyAverage = 450.0,
+            ),
+        )
+
+        assertEquals(CoachVerdict.WATCH, assessment.verdict)
+        assertTrue(assessment.signals.any { it.code == "ENERGY_WEIGHT_MISMATCH_DEFICIT" })
+        assertTrue(
+            assessment.nextActions.any {
+                it.contains("赤字をさらに強めない") || it.contains("未記録")
+            },
+        )
+    }
+
+    @Test
+    fun `notes aligned calorie deficit and weight loss as information only`() {
+        val assessment = CoachAssessmentEngine.assess(
+            snapshot(
+                weightLossRate = 0.5,
+                fatTrend = -0.3,
+                leanTrend = 0.0,
+                routineDays = 6,
+                routineAdherence = 86,
+                stepsBaseline = 102,
+                sleepTargetDays = 5,
+                weightTrendKgPerWeek = -0.40,
+                estimatedEnergyBalanceDailyAverage = -500.0,
+                nutritionMeasurementDays = 7,
+                intakeCaloriesDailyAverage = 1_550.0,
+                basalCaloriesDailyAverage = 1_600.0,
+                activeCaloriesDailyAverage = 450.0,
+            ),
+        )
+
+        assertEquals(CoachVerdict.ON_TRACK, assessment.verdict)
+        assertTrue(assessment.signals.any { it.code == "ENERGY_WEIGHT_ALIGNED" })
+        assertTrue(assessment.nextActions.none { it.contains("赤字") })
+    }
+
     private fun snapshot(
         weightLossRate: Double?,
         fatTrend: Double?,
@@ -184,15 +238,20 @@ class CoachAssessmentEngineTest {
         proteinDailyAverageGrams: Double? = null,
         nutritionMeasurementDays: Int = 0,
         fatEnergyPercent: Double? = null,
+        weightTrendKgPerWeek: Double? = null,
+        estimatedEnergyBalanceDailyAverage: Double? = null,
+        intakeCaloriesDailyAverage: Double? = null,
+        basalCaloriesDailyAverage: Double? = null,
+        activeCaloriesDailyAverage: Double = 400.0,
     ) = WeeklySnapshot(
         weekStart = "2026-07-24",
         weekEnd = "2026-07-30",
         fatMassChangeKg = null,
         leanMassChangeKg = null,
-        weightChangeKg = null,
+        weightChangeKg = weightTrendKgPerWeek,
         bodyMeasurementDays = bodyDays,
         stepsDailyAverage = 8_000,
-        activeCaloriesDailyAverage = 400.0,
+        activeCaloriesDailyAverage = activeCaloriesDailyAverage,
         exerciseSessions = routineDays,
         exerciseMinutes = routineDays * 5L,
         strengthMinutes = 0,
@@ -203,6 +262,7 @@ class CoachAssessmentEngineTest {
         sleepDailyAverageMinutes = 440,
         sleepMeasurementDays = if (sleepTargetDays == null) 0 else 7,
         weightLossRatePercentPerWeek = weightLossRate,
+        weightTrendKgPerWeek = weightTrendKgPerWeek,
         fatMassTrendKgPerWeek = fatTrend,
         leanMassTrendKgPerWeek = leanTrend,
         trendMeasurementDays = trendDays,
@@ -218,5 +278,8 @@ class CoachAssessmentEngineTest {
         proteinDailyAverageGrams = proteinDailyAverageGrams,
         nutritionMeasurementDays = nutritionMeasurementDays,
         fatEnergyPercent = fatEnergyPercent,
+        estimatedEnergyBalanceDailyAverage = estimatedEnergyBalanceDailyAverage,
+        intakeCaloriesDailyAverage = intakeCaloriesDailyAverage,
+        basalCaloriesDailyAverage = basalCaloriesDailyAverage,
     )
 }
