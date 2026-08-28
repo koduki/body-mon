@@ -102,7 +102,7 @@ class PublishTest(unittest.TestCase):
             cmd.assert_not_called()
 
     def test_published_release_is_never_overwritten_on_rerun(self):
-        with patch("release.api_optional", side_effect=[self.head, self.head, {"draft": False}]), patch("release.command") as cmd:
+        with patch("release.api_optional", side_effect=[self.head, self.head, [{"tag_name": "v0.1.1042", "draft": False}]]), patch("release.command") as cmd:
             release.publish(self.output)
             cmd.assert_not_called()
 
@@ -114,7 +114,11 @@ class PublishTest(unittest.TestCase):
             cmd.assert_not_called()
 
     def test_new_release_is_published_only_after_complete_draft_upload(self):
-        responses = [self.head, None, None, {"assets": self.assets}, {"draft": False}]
+        responses = [
+            self.head, None, [],
+            [{"tag_name": "v0.1.1042", "draft": True, "assets": self.assets}],
+            [{"tag_name": "v0.1.1042", "draft": False}],
+        ]
         with patch("release.api_optional", side_effect=responses), patch("release.command") as cmd:
             release.publish(self.output)
             calls = [call.args[0] for call in cmd.call_args_list]
@@ -125,8 +129,11 @@ class PublishTest(unittest.TestCase):
             self.assertIn("--draft=false", calls[-1])
 
     def test_interrupted_draft_can_be_retried(self):
-        responses = [self.head, self.head, {"draft": True, "target_commitish": SHA},
-                     {"assets": self.assets}, {"draft": False}]
+        responses = [
+            self.head, self.head, [{"tag_name": "v0.1.1042", "draft": True, "target_commitish": SHA}],
+            [{"tag_name": "v0.1.1042", "draft": True, "assets": self.assets}],
+            [{"tag_name": "v0.1.1042", "draft": False}],
+        ]
         with patch("release.api_optional", side_effect=responses), patch("release.command") as cmd:
             release.publish(self.output)
             calls = [call.args[0] for call in cmd.call_args_list]
@@ -134,7 +141,7 @@ class PublishTest(unittest.TestCase):
             self.assertIn("--clobber", calls[0])
 
     def test_partial_upload_stays_a_draft(self):
-        responses = [self.head, None, None, {"assets": self.assets[:1]}]
+        responses = [self.head, None, [], [{"tag_name": "v0.1.1042", "draft": True, "assets": self.assets[:1]}]]
         with patch("release.api_optional", side_effect=responses), patch("release.command") as cmd:
             with self.assertRaises(RuntimeError):
                 release.publish(self.output)

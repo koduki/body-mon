@@ -121,6 +121,16 @@ def api_optional(path):
     return data
 
 
+def get_release(repo, tag):
+    releases = api_optional(f"repos/{repo}/releases")
+    if releases is None or not isinstance(releases, list):
+        return None
+    for r in releases:
+        if r.get("tag_name") == tag:
+            return r
+    return None
+
+
 def summary(message):
     print(message)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
@@ -157,7 +167,7 @@ def publish(output):
             raise ValueError("Release tag already points to a different commit.")
     else:
         command(["gh", "api", f"repos/{repo}/git/refs", "--method", "POST", "-f", f"ref=refs/tags/{tag}", "-f", f"sha={sha}"])
-    existing = api_optional(f"repos/{repo}/releases/tags/{tag}")
+    existing = get_release(repo, tag)
     if existing and not existing["draft"]:
         summary(f"Release {tag} is already published; its assets were left unchanged.")
         return
@@ -178,12 +188,12 @@ def publish(output):
                  "--draft", "--title", f"Health Coach {name}", "--notes-file", str(notes)])
     # Only drafts may be overwritten when recovering from an interrupted upload.
     command(["gh", "release", "upload", tag, "--repo", repo, "--clobber", *[str(output / asset) for asset in ASSETS]])
-    uploaded = api_optional(f"repos/{repo}/releases/tags/{tag}")
+    uploaded = get_release(repo, tag)
     sizes = {asset["name"]: asset["size"] for asset in uploaded["assets"]} if uploaded else {}
     if any(sizes.get(asset) != (output / asset).stat().st_size for asset in ASSETS):
         raise RuntimeError("Draft release assets are incomplete; it was not published.")
     command(["gh", "release", "edit", tag, "--repo", repo, "--draft=false", "--latest"])
-    published = api_optional(f"repos/{repo}/releases/tags/{tag}")
+    published = get_release(repo, tag)
     if not published or published["draft"]:
         raise RuntimeError("Could not verify that the release was published.")
     summary(f"Published [{tag}](https://github.com/{repo}/releases/tag/{tag}).")
