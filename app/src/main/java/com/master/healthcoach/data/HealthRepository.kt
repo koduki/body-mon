@@ -111,6 +111,12 @@ class HealthRepository(
             to.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() - 1,
         )
 
+    suspend fun getNutritionMeals(from: LocalDate, to: LocalDate) =
+        dao.getNutritionMeals(
+            from.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            to.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() - 1,
+        )
+
     suspend fun addMessage(
         role: String,
         content: String,

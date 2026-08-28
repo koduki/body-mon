@@ -64,14 +64,14 @@ class HealthChatCoordinator(
             )
         } ?: modelAnswer
         repository.addMessage("assistant", answer)
-        refreshHabitMemory(apiKey, force = false)
+        runCatching { refreshHabitMemory(apiKey, force = false) }
         repository.pruneChatHistory()
         return answer
     }
 
     suspend fun analyzeLatestWeek(): AdviceResponse {
         val apiKey = apiKeyStore.load() ?: error("設定画面でGemini APIキーを保存してください")
-        refreshHabitMemory(apiKey, force = true)
+        runCatching { refreshHabitMemory(apiKey, force = false) }
         val report = repository.getLatestWeekly() ?: repository.rebuildWeekly()
         val snapshot = json.decodeFromString<WeeklySnapshot>(report.snapshotJson)
         val goal = repository.getGoal()
@@ -82,12 +82,12 @@ class HealthChatCoordinator(
             )
             appendLine(
                 "PFC週平均: たんぱく質=" +
-                    "${snapshot.proteinDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
-                    "(${snapshot.proteinEnergyPercent.energyRatio()}), " +
-                    "脂質=${snapshot.totalFatDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
-                    "(${snapshot.fatEnergyPercent.energyRatio()}), " +
-                    "炭水化物=${snapshot.carbohydrateDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
-                    "(${snapshot.carbohydrateEnergyPercent.energyRatio()})",
+                        "${snapshot.proteinDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
+                        "(${snapshot.proteinEnergyPercent.energyRatio()}), " +
+                        "脂質=${snapshot.totalFatDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
+                        "(${snapshot.fatEnergyPercent.energyRatio()}), " +
+                        "炭水化物=${snapshot.carbohydrateDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
+                        "(${snapshot.carbohydrateEnergyPercent.energyRatio()})",
             )
             appendLine("目標: ${goal?.existingAiGoal()}")
             appendLine("会話から確認済みの習慣: ${repository.getMemory()?.summary.orEmpty()}")
@@ -138,7 +138,7 @@ class HealthChatCoordinator(
         Health Connectの数値は、必要な場合だけ提供されたローカル関数を呼び出して取得してください。
         データなしで数値を推測しないでください。BIA体組成は水分等で変動するため、単日値を断定しません。
         除脂肪量は筋肉量そのものではなく、筋肉維持の参考指標として扱ってください。
-        医療診断、疾病の推測、服薬指示、極端な食事制限は行いません。
+        医療診断、疾患の推測、服薬指示、極端な食事制限は行いません。
         食事記録がある日は、提供された摂取カロリーとPFCを観測値として扱います。
         週報分析ではPFCのグラムとエネルギー比を必ず明示してください。
         助言は低脂質ダイエットの方針で、食事内容、運動量、摂取と活動のバランス、
@@ -173,13 +173,13 @@ class HealthChatCoordinator(
 
 internal fun GoalEntity.existingAiProfile(): String =
     "年齢=$age, 身長=${heightCm}cm, 性別=$sex, " +
-        "期限=$deadline, 目標脂肪量=${targetFatMassKg}kg, " +
-        "維持する除脂肪量=${minimumLeanMassKg}kg"
+            "期限=$deadline, 目標脂肪量=${targetFatMassKg}kg, " +
+            "維持する除脂肪量=${minimumLeanMassKg}kg"
 
 internal fun GoalEntity.existingAiGoal(): String =
     "${existingAiProfile()}, 1日歩数=$dailySteps, " +
-        "週の朝トレ目標日数=$weeklyExerciseSessions, " +
-        "参考活動消費=${dailyActiveCaloriesKcal}kcal"
+            "週の朝トレ目標日数=$weeklyExerciseSessions, " +
+            "参考活動消費=${dailyActiveCaloriesKcal}kcal"
 
 /**
  * Dashboard-only KPIs stay on device. Manual Gemini analysis keeps the pre-existing

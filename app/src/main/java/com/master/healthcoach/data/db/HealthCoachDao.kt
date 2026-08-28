@@ -53,6 +53,9 @@ interface HealthCoachDao {
     @Query("SELECT * FROM exercise_sessions WHERE startEpochMillis BETWEEN :from AND :to ORDER BY startEpochMillis")
     suspend fun getExerciseSessions(from: Long, to: Long): List<ExerciseSessionEntity>
 
+    @Query("SELECT * FROM nutrition_meals WHERE startEpochMillis BETWEEN :from AND :to ORDER BY startEpochMillis")
+    suspend fun getNutritionMeals(from: Long, to: Long): List<NutritionMealEntity>
+
     @Query("SELECT * FROM goals WHERE id = 1")
     fun observeGoal(): Flow<GoalEntity?>
 
@@ -76,13 +79,13 @@ interface HealthCoachDao {
 
     @Query(
         "DELETE FROM exercise_sessions " +
-            "WHERE startEpochMillis >= :from AND startEpochMillis < :toExclusive",
+                "WHERE startEpochMillis >= :from AND startEpochMillis < :toExclusive",
     )
     suspend fun deleteExerciseSessionsInRange(from: Long, toExclusive: Long)
 
     @Query(
         "DELETE FROM nutrition_meals " +
-            "WHERE startEpochMillis >= :from AND startEpochMillis < :toExclusive",
+                "WHERE startEpochMillis >= :from AND startEpochMillis < :toExclusive",
     )
     suspend fun deleteNutritionMealsInRange(from: Long, toExclusive: Long)
 

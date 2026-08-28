@@ -43,7 +43,10 @@ data class GeminiResult(
 class GeminiClient(
     private val json: Json,
     private val httpClient: OkHttpClient = OkHttpClient.Builder()
-        .callTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .callTimeout(180, TimeUnit.SECONDS)
         .build(),
 ) {
     suspend fun chatWithTools(
@@ -178,7 +181,7 @@ class GeminiClient(
         body: JsonObject,
     ): RawResponse = withContext(Dispatchers.IO) {
         val url = "https://generativelanguage.googleapis.com/v1beta/models/" +
-            "${model}:generateContent"
+                "${model}:generateContent"
         val request = Request.Builder()
             .url(url)
             .header("x-goog-api-key", apiKey)
@@ -231,7 +234,7 @@ class GeminiClient(
                 add(
                     function(
                         "get_nutrition_summary",
-                        "指定期間の摂取カロリー、たんぱく質、脂質、炭水化物とPFCエネルギー比を取得します",
+                        "指定期間の摂取カロリー、たんぱく質、脂質、炭水化物、PFCエネルギー比、および朝食・昼食・夕食・間食などの各食事レコード（時刻・カロリー・PFC）を取得します",
                     ),
                 )
                 add(buildJsonObject {

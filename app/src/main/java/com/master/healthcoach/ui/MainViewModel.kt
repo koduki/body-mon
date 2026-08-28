@@ -16,6 +16,7 @@ import com.master.healthcoach.data.db.WeeklyReportEntity
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.data.llm.ChatAttachment
 import com.master.healthcoach.data.llm.ChatAttachmentReader
+import com.master.healthcoach.data.security.SecureApiKeyStore
 import com.master.healthcoach.domain.AdviceResponse
 import com.master.healthcoach.domain.WeeklySnapshot
 import java.time.LocalDate
@@ -44,7 +45,7 @@ data class MainUiState(
     val isSyncing: Boolean = false,
     val isSending: Boolean = false,
     val apiKeyConfigured: Boolean = false,
-    val modelId: String = "gemini-3.6-flash",
+    val modelId: String = SecureApiKeyStore.DEFAULT_MODEL,
     val weeklyAdvice: AdviceResponse? = null,
     val chatAttachments: List<ChatAttachment> = emptyList(),
     val isAddingAttachments: Boolean = false,
@@ -283,25 +284,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         require(
             goal.weeklyExerciseSessions == null ||
-                goal.weeklyExerciseSessions in 0..7,
+                    goal.weeklyExerciseSessions in 0..7,
         ) {
             "週の朝トレ目標日数は0〜7日の範囲で入力してください"
         }
         require(
             goal.dailyActiveCaloriesKcal == null ||
-                goal.dailyActiveCaloriesKcal in 1.0..5_000.0,
+                    goal.dailyActiveCaloriesKcal in 1.0..5_000.0,
         ) {
             "活動消費目標は1〜5,000kcalの範囲で入力してください"
         }
         require(
             goal.dietStartDate == null ||
-                runCatching { LocalDate.parse(goal.dietStartDate) }.isSuccess,
+                    runCatching { LocalDate.parse(goal.dietStartDate) }.isSuccess,
         ) {
             "減量開始日はYYYY-MM-DD形式で入力してください"
         }
         require(
             goal.deadline == null ||
-                runCatching { LocalDate.parse(goal.deadline) }.isSuccess,
+                    runCatching { LocalDate.parse(goal.deadline) }.isSuccess,
         ) {
             "目標期限はYYYY-MM-DD形式で入力してください"
         }

@@ -196,7 +196,7 @@ class HealthToolExecutor(private val repository: HealthRepository) {
             put("daily", buildJsonArray {
                 items.filter {
                     it.moderateIntensityMinutes != null ||
-                        it.vigorousIntensityMinutes != null
+                            it.vigorousIntensityMinutes != null
                 }.forEach { item ->
                     add(buildJsonObject {
                         put("date", item.date)
@@ -233,6 +233,7 @@ class HealthToolExecutor(private val repository: HealthRepository) {
     private suspend fun nutrition(call: GeminiFunctionCall): JsonElement {
         val (from, to) = range(call)
         val items = repository.getDaily(from, to)
+        val meals = repository.getNutritionMeals(from, to)
         val measured = items.filter { it.intakeCaloriesKcal != null }
         val intakeAverage = measured.mapNotNull { it.intakeCaloriesKcal }.averageOrNull()
         val proteinAverage = items.mapNotNull { it.proteinGrams }.averageOrNull()
@@ -242,13 +243,14 @@ class HealthToolExecutor(private val repository: HealthRepository) {
             put("from", from.toString())
             put("to", to.toString())
             put("measurementDays", measured.size)
+            put("totalMealCount", meals.size)
             put(
                 "sourceNote",
                 "あすけんからHealth Connectへ書き出されるのは摂取カロリー・たんぱく質・脂質・炭水化物。" +
-                    "欠測日は0kcalとせず、未記録として扱う。" +
-                    "食事回数はNutritionRecordのstart/endが近いレコードを1食にまとめて数える。" +
-                    "推定エネルギー収支は摂取−基礎代謝−活動消費で、デバイス推定のため参考値。" +
-                    "PFCエネルギー比は記録グラム×4/9/4kcalを摂取カロリーで割った参考値。",
+                        "欠測日は0kcalとせず、未記録として扱う。" +
+                        "食事回数はNutritionRecordのstart/endが近いレコードを1食にまとめて数える。" +
+                        "推定エネルギー収支は摂取−基礎代謝−活動消費で、デバイス推定のため参考値。" +
+                        "PFCエネルギー比は記録グラム×4/9/4kcalを摂取カロリーで割った参考値。",
             )
             number("intakeCaloriesDailyAverage", intakeAverage)
             number("proteinDailyAverageGrams", proteinAverage)
@@ -280,6 +282,31 @@ class HealthToolExecutor(private val repository: HealthRepository) {
                         number(
                             "estimatedEnergyBalanceKcal",
                             item.estimatedEnergyBalanceKcal,
+                        )
+                    })
+                }
+            })
+            put("recentMeals", buildJsonArray {
+                meals.takeLast(40).forEach { meal ->
+                    add(buildJsonObject {
+                        put("date", meal.date)
+                        put("startEpochMillis", meal.startEpochMillis)
+                        put("mealLabel", meal.mealLabel)
+                        number("intakeCaloriesKcal", meal.intakeCaloriesKcal)
+                        number("proteinGrams", meal.proteinGrams)
+                        number("totalFatGrams", meal.totalFatGrams)
+                        number("carbohydrateGrams", meal.carbohydrateGrams)
+                        number(
+                            "proteinEnergyPercent",
+                            NutritionMacros.proteinEnergyPercent(meal.proteinGrams, meal.intakeCaloriesKcal),
+                        )
+                        number(
+                            "fatEnergyPercent",
+                            NutritionMacros.fatEnergyPercent(meal.totalFatGrams, meal.intakeCaloriesKcal),
+                        )
+                        number(
+                            "carbohydrateEnergyPercent",
+                            NutritionMacros.carbohydrateEnergyPercent(meal.carbohydrateGrams, meal.intakeCaloriesKcal),
                         )
                     })
                 }

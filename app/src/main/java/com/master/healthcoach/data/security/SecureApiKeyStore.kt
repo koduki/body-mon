@@ -70,7 +70,7 @@ class SecureApiKeyStore(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_MODEL = "gemini-3.6-flash"
+        const val DEFAULT_MODEL = "gemini-3.7-flash"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "health_coach_gemini_key"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
@@ -79,4 +79,3 @@ class SecureApiKeyStore(context: Context) {
         private const val KEY_MODEL = "gemini_model"
     }
 }
-
