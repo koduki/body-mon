@@ -127,7 +127,7 @@ object NutritionMealClusterer {
                     .toLocalDate()
             }
             .toSortedMap()
-            .flatMap { (date, dayRecords) -> clusterDay(date, dayRecords, zoneId) }
+            .flatMap { (date, dayRecords) -> preferMealScoped(clusterDay(date, dayRecords, zoneId)) }
     }
 
     private fun clusterDay(
@@ -136,25 +136,45 @@ object NutritionMealClusterer {
         zoneId: ZoneId,
     ): List<NutritionMeal> {
         val clusters = mutableListOf<MutableList<NutritionRecordSnapshot>>()
-        records.sortedBy { it.startEpochMillis }.forEach { record ->
-            if (isDailySpan(record)) {
+        records.sortedWith(
+            compareBy<NutritionRecordSnapshot> { it.startEpochMillis }
+                .thenBy { it.mealType },
+        ).forEach { record ->
+            if (isUntypedDailySpan(record)) {
                 clusters.add(mutableListOf(record))
                 return@forEach
             }
             val current = clusters.lastOrNull()
-            if (current != null && !current.any(::isDailySpan) && belongs(current, record)) {
+            if (current != null &&
+                !current.any(::isUntypedDailySpan) &&
+                belongs(current, record)
+            ) {
                 current.add(record)
             } else {
                 clusters.add(mutableListOf(record))
             }
         }
         return clusters.map { clusterRecords -> toMeal(date, clusterRecords, zoneId) }
+            .sortedWith(
+                compareBy<NutritionMeal> { it.startEpochMillis }
+                    .thenBy { mealTypeSortKey(it.mealType) },
+            )
+    }
+
+    /**
+     * 同じ日に日次合計と食事単位が混在する場合は、食事単位だけを残す。
+     * あすけんが日次合計だけを書く日はそのまま1件として扱う。
+     */
+    internal fun preferMealScoped(meals: List<NutritionMeal>): List<NutritionMeal> {
+        val scoped = meals.filterNot { it.isDailyTotal }
+        return scoped.ifEmpty { meals }
     }
 
     private fun belongs(
         cluster: List<NutritionRecordSnapshot>,
         record: NutritionRecordSnapshot,
     ): Boolean {
+        if (!compatibleMealTypes(cluster, record)) return false
         val latestStart = cluster.maxOf { it.startEpochMillis }
         val earliestStart = cluster.minOf { it.startEpochMillis }
         val latestEnd = cluster.maxOf { it.endEpochMillis }
@@ -164,6 +184,20 @@ object NutritionMealClusterer {
         return closeStart || overlaps
     }
 
+    /**
+     * あすけんはアドバイス閲覧時に朝昼夕をまとめて書き出すことがある。
+     * start/endが近くても、既知のmealTypeが違うレコードは別の1食として扱う。
+     */
+    private fun compatibleMealTypes(
+        cluster: List<NutritionRecordSnapshot>,
+        record: NutritionRecordSnapshot,
+    ): Boolean {
+        val recordType = knownMealType(record.mealType) ?: return true
+        val clusterTypes = cluster.mapNotNull { knownMealType(it.mealType) }.toSet()
+        if (clusterTypes.isEmpty()) return true
+        return clusterTypes.singleOrNull() == recordType
+    }
+
     private fun toMeal(
         date: LocalDate,
         records: List<NutritionRecordSnapshot>,
@@ -171,8 +205,10 @@ object NutritionMealClusterer {
     ): NutritionMeal {
         val start = records.minOf { it.startEpochMillis }
         val end = records.maxOf { it.endEpochMillis }
-        val dailyTotal = records.any(::isDailySpan) || end - start >= DAILY_SPAN_MS
         val mealType = majorityMealType(records)
+        val typedMeal = knownMealType(mealType) != null
+        val dailyTotal = !typedMeal &&
+            (records.any(::isUntypedDailySpan) || end - start >= DAILY_SPAN_MS)
         val label = if (dailyTotal) {
             "日次合計"
         } else {
@@ -195,8 +231,7 @@ object NutritionMealClusterer {
     }
 
     private fun majorityMealType(records: List<NutritionRecordSnapshot>): Int {
-        val known = records.map { it.mealType }
-            .filter { it in NutritionWriteShape.MEAL_TYPE_BREAKFAST..NutritionWriteShape.MEAL_TYPE_SNACK }
+        val known = records.mapNotNull { knownMealType(it.mealType) }
         if (known.isEmpty()) return NutritionWriteShape.MEAL_TYPE_UNKNOWN
         return known.groupingBy { it }.eachCount().maxBy { it.value }.key
     }
@@ -213,8 +248,22 @@ object NutritionMealClusterer {
         }
     }
 
-    private fun isDailySpan(record: NutritionRecordSnapshot): Boolean =
-        record.endEpochMillis - record.startEpochMillis >= DAILY_SPAN_MS
+    private fun isUntypedDailySpan(record: NutritionRecordSnapshot): Boolean =
+        knownMealType(record.mealType) == null &&
+            record.endEpochMillis - record.startEpochMillis >= DAILY_SPAN_MS
+
+    private fun knownMealType(mealType: Int): Int? =
+        mealType.takeIf {
+            it in NutritionWriteShape.MEAL_TYPE_BREAKFAST..NutritionWriteShape.MEAL_TYPE_SNACK
+        }
+
+    private fun mealTypeSortKey(mealType: Int): Int = when (mealType) {
+        NutritionWriteShape.MEAL_TYPE_BREAKFAST -> 0
+        NutritionWriteShape.MEAL_TYPE_LUNCH -> 1
+        NutritionWriteShape.MEAL_TYPE_DINNER -> 2
+        NutritionWriteShape.MEAL_TYPE_SNACK -> 3
+        else -> 4
+    }
 
     private fun sumOrNull(
         records: List<NutritionRecordSnapshot>,
