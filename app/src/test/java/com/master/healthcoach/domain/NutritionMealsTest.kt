@@ -109,6 +109,155 @@ class NutritionMealsTest {
         assertEquals("判定保留", missing.label)
     }
 
+    @Test
+    fun `keeps distinct mealTypes as separate meals even when start times match`() {
+        val syncTime = LocalTime.of(21, 30)
+        val meals = NutritionMealClusterer.cluster(
+            listOf(
+                record(
+                    syncTime,
+                    syncTime,
+                    mealType = NutritionWriteShape.MEAL_TYPE_BREAKFAST,
+                    protein = 20.0,
+                    fat = 5.0,
+                    carb = 40.0,
+                    energy = 285.0,
+                ),
+                record(
+                    syncTime,
+                    syncTime,
+                    mealType = NutritionWriteShape.MEAL_TYPE_LUNCH,
+                    protein = 35.0,
+                    fat = 12.0,
+                    carb = 70.0,
+                    energy = 532.0,
+                ),
+                record(
+                    syncTime,
+                    syncTime,
+                    mealType = NutritionWriteShape.MEAL_TYPE_DINNER,
+                    protein = 40.0,
+                    fat = 10.0,
+                    carb = 55.0,
+                    energy = 470.0,
+                ),
+            ),
+            zone,
+        )
+
+        assertEquals(3, meals.size)
+        assertEquals(listOf("朝", "昼", "夕"), meals.map { it.mealLabel })
+        assertEquals(20.0, meals[0].proteinGrams)
+        assertEquals(35.0, meals[1].proteinGrams)
+        assertEquals(40.0, meals[2].proteinGrams)
+        assertFalse(meals.any { it.isDailyTotal })
+    }
+
+    @Test
+    fun `still clusters same mealType foods written close together`() {
+        val meals = NutritionMealClusterer.cluster(
+            listOf(
+                record(
+                    LocalTime.of(12, 0),
+                    LocalTime.of(12, 10),
+                    mealType = NutritionWriteShape.MEAL_TYPE_LUNCH,
+                    protein = 20.0,
+                    fat = 6.0,
+                    carb = 40.0,
+                    energy = 300.0,
+                ),
+                record(
+                    LocalTime.of(12, 5),
+                    LocalTime.of(12, 15),
+                    mealType = NutritionWriteShape.MEAL_TYPE_LUNCH,
+                    protein = 15.0,
+                    fat = 4.0,
+                    carb = 30.0,
+                    energy = 220.0,
+                ),
+            ),
+            zone,
+        )
+
+        assertEquals(1, meals.size)
+        assertEquals("昼", meals.single().mealLabel)
+        assertEquals(2, meals.single().recordCount)
+        assertEquals(35.0, meals.single().proteinGrams)
+    }
+
+    @Test
+    fun `typed meal records keep meal labels even with long intervals`() {
+        val meals = NutritionMealClusterer.cluster(
+            listOf(
+                record(
+                    LocalTime.MIDNIGHT,
+                    LocalTime.MIDNIGHT,
+                    endNextDay = true,
+                    mealType = NutritionWriteShape.MEAL_TYPE_BREAKFAST,
+                    protein = 20.0,
+                    fat = 5.0,
+                    carb = 40.0,
+                    energy = 285.0,
+                ),
+                record(
+                    LocalTime.MIDNIGHT,
+                    LocalTime.MIDNIGHT,
+                    endNextDay = true,
+                    mealType = NutritionWriteShape.MEAL_TYPE_DINNER,
+                    protein = 40.0,
+                    fat = 10.0,
+                    carb = 55.0,
+                    energy = 470.0,
+                ),
+            ),
+            zone,
+        )
+
+        assertEquals(2, meals.size)
+        assertEquals(listOf("朝", "夕"), meals.map { it.mealLabel })
+        assertFalse(meals.any { it.isDailyTotal })
+    }
+
+    @Test
+    fun `drops daily total when meal scoped records exist for the same day`() {
+        val meals = NutritionMealClusterer.cluster(
+            listOf(
+                record(
+                    LocalTime.MIDNIGHT,
+                    LocalTime.MIDNIGHT,
+                    endNextDay = true,
+                    protein = 120.0,
+                    fat = 45.0,
+                    carb = 220.0,
+                    energy = 1_800.0,
+                ),
+                record(
+                    LocalTime.of(7, 30),
+                    LocalTime.of(7, 50),
+                    mealType = NutritionWriteShape.MEAL_TYPE_BREAKFAST,
+                    protein = 20.0,
+                    fat = 5.0,
+                    carb = 40.0,
+                    energy = 285.0,
+                ),
+                record(
+                    LocalTime.of(12, 10),
+                    LocalTime.of(12, 40),
+                    mealType = NutritionWriteShape.MEAL_TYPE_LUNCH,
+                    protein = 35.0,
+                    fat = 12.0,
+                    carb = 70.0,
+                    energy = 532.0,
+                ),
+            ),
+            zone,
+        )
+
+        assertEquals(2, meals.size)
+        assertEquals(listOf("朝", "昼"), meals.map { it.mealLabel })
+        assertFalse(meals.any { it.isDailyTotal })
+    }
+
     private fun record(
         start: LocalTime,
         end: LocalTime,

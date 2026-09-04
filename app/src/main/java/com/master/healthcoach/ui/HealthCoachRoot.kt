@@ -286,7 +286,18 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
     }
     val todayMeals = state.nutritionMeals
         .filter { it.date == todayStr }
-        .sortedBy { it.startEpochMillis }
+        .sortedWith(
+            compareBy<NutritionMealEntity> { it.startEpochMillis }
+                .thenBy {
+                    when (it.mealType) {
+                        1 -> 0 // breakfast
+                        2 -> 1 // lunch
+                        3 -> 2 // dinner
+                        4 -> 3 // snack
+                        else -> 4
+                    }
+                },
+        )
     val morningRoutineMinutes = maxOf(
         todayDaily?.morningRoutineMinutes ?: 0,
         todaySessions.filter { it.category == "morning_routine" }
@@ -2154,7 +2165,7 @@ private fun MealPfcChartCard(meals: List<NutritionMealEntity>) {
         ) {
             Text("食事ごとのPFC", fontWeight = FontWeight.SemiBold)
             Text(
-                "start/endが45分以内または区間が重なるレコードを1食にまとめています",
+                "start/endが近いレコードを1食にまとめます。mealTypeが違う朝昼夕は別食として扱います",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2291,19 +2302,18 @@ private fun PfcVerticalBar(balance: PfcBalance?, modifier: Modifier = Modifier) 
     val segments = balance?.let { pfcSegments(it) }.orEmpty()
     Column(
         modifier
-            .fillMaxSize()
             .clip(RoundedCornerShape(6.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
-        verticalArrangement = Arrangement.Bottom,
     ) {
         if (segments.isEmpty()) {
-            Box(Modifier.fillMaxWidth().fillMaxHeight())
+            Box(Modifier.fillMaxWidth().weight(1f))
         } else {
+            // 下から C → F → P になるよう逆順で積み、weight で構成比を表す
             segments.asReversed().forEach { segment ->
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .weight(segment.fraction)
+                        .weight(segment.fraction.coerceAtLeast(0.0001f))
                         .background(segment.color),
                 )
             }

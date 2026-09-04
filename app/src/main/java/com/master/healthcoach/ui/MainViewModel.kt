@@ -73,11 +73,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.daily,
         repository.body,
         repository.sources,
-        combine(repository.exerciseSessions, repository.nutritionMeals) { sessions, meals ->
-            sessions to meals
-        },
-    ) { daily, body, sources, sessionsAndMeals ->
-        HealthData(daily, body, sources, sessionsAndMeals.first, sessionsAndMeals.second)
+        repository.exerciseSessions,
+        repository.nutritionMeals,
+    ) { daily, body, sources, sessions, meals ->
+        HealthData(daily, body, sources, sessions, meals)
     }
 
     private val appData = combine(
