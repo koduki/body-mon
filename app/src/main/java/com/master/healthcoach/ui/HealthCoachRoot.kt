@@ -2165,7 +2165,7 @@ private fun MealPfcChartCard(meals: List<NutritionMealEntity>) {
         ) {
             Text("食事ごとのPFC", fontWeight = FontWeight.SemiBold)
             Text(
-                "start/endが45分以内または区間が重なるレコードを1食にまとめています",
+                "start/endが近いレコードを1食にまとめます。mealTypeが違う朝昼夕は別食として扱います",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
