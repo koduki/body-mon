@@ -79,6 +79,19 @@ data class WeeklySnapshot(
     val fatEnergyPercent: Double? = null,
     val carbohydrateEnergyPercent: Double? = null,
     val mealCountDailyAverage: Double? = null,
+    /** Step/workout based reference (EnergyModel). Lower-leaning; device value is upper-leaning. */
+    val referenceActiveStepModelDailyAverage: Double? = null,
+    val referenceActiveRangeLowKcal: Double? = null,
+    val referenceActiveRangeHighKcal: Double? = null,
+    val referenceActiveValidDays: Int = 0,
+    /** Dashboard-only; never sent to Gemini in the weekly contract. */
+    val referenceEnergyBalanceLowKcal: Double? = null,
+    val referenceEnergyBalanceHighKcal: Double? = null,
+    val referenceEnergyBalanceValidDays: Int = 0,
+    /** Retrospective adaptive TDEE check (Phase 4). Dashboard-only. */
+    val adaptiveTdeeLowKcal: Double? = null,
+    val adaptiveTdeeHighKcal: Double? = null,
+    val adaptiveTdeeIntakeDays: Int = 0,
 )
 
 @Serializable

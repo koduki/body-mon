@@ -1,7 +1,7 @@
 package com.master.healthcoach.data.llm
 
 import com.master.healthcoach.data.HealthRepository
-import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
+import com.master.healthcoach.domain.EnergyModel
 import com.master.healthcoach.domain.NutritionMacros
 import java.time.LocalDate
 import kotlinx.serialization.json.JsonArray
@@ -62,6 +62,12 @@ class HealthToolExecutor(private val repository: HealthRepository) {
     private suspend fun activity(call: GeminiFunctionCall): JsonElement {
         val (from, to) = range(call)
         val items = repository.getDaily(from, to)
+        val goal = repository.getGoal()
+        val body = repository.getBody(
+            from.minusDays(EnergyModel.WEIGHT_FALLBACK_DAYS),
+            to,
+        )
+        val summary = EnergyModel.summarizeActive(items, body, goal?.heightCm, goal?.sex)
         return buildJsonObject {
             put("from", from.toString())
             put("to", to.toString())
@@ -70,13 +76,46 @@ class HealthToolExecutor(private val repository: HealthRepository) {
                 "activeCaloriesDailyAverage",
                 items.mapNotNull { it.activeCaloriesKcal }.averageOrNull(),
             )
+            put(
+                "referenceNote",
+                "activeCaloriesKcalはXiaomi Bandの推定（上限寄り）。" +
+                    "reference*は歩数・運動時間からの換算（下限寄り）。" +
+                    "レンジで扱い、摂取量や赤字量の指示には使わない。" +
+                    "modelVersion=${EnergyModel.VERSION}。${EnergyModel.INTERPRETATION}",
+            )
+            summary?.let {
+                number("referenceStepModelActiveKcalDailyAverage", it.stepModelDailyAverageKcal)
+                number("referenceActiveRangeLowKcal", it.range.lowKcal)
+                number("referenceActiveRangeHighKcal", it.range.highKcal)
+                put("referenceActiveValidDays", it.validDays)
+            }
             put("daily", buildJsonArray {
                 items.forEach { item ->
+                    val estimate = EnergyModel.dailyActive(
+                        item,
+                        body,
+                        goal?.heightCm,
+                        goal?.sex,
+                    )
                     add(buildJsonObject {
                         put("date", item.date)
                         item.steps?.let { put("steps", it) }
                         number("distanceMeters", item.distanceMeters)
                         number("activeCaloriesKcal", item.activeCaloriesKcal)
+                        estimate?.let {
+                            number(
+                                "referenceStepModelActiveKcal",
+                                EnergyModel.roundForDisplay(it.stepModelKcal),
+                            )
+                            number(
+                                "referenceActiveRangeLowKcal",
+                                EnergyModel.roundForDisplay(it.range.lowKcal),
+                            )
+                            number(
+                                "referenceActiveRangeHighKcal",
+                                EnergyModel.roundForDisplay(it.range.highKcal),
+                            )
+                        }
                     })
                 }
             })
@@ -234,6 +273,11 @@ class HealthToolExecutor(private val repository: HealthRepository) {
         val (from, to) = range(call)
         val items = repository.getDaily(from, to)
         val meals = repository.getNutritionMeals(from, to)
+        val goal = repository.getGoal()
+        val body = repository.getBody(
+            from.minusDays(EnergyModel.WEIGHT_FALLBACK_DAYS),
+            to,
+        )
         val measured = items.filter { it.intakeCaloriesKcal != null }
         val intakeAverage = measured.mapNotNull { it.intakeCaloriesKcal }.averageOrNull()
         val proteinAverage = items.mapNotNull { it.proteinGrams }.averageOrNull()
@@ -249,7 +293,8 @@ class HealthToolExecutor(private val repository: HealthRepository) {
                 "あすけんからHealth Connectへ書き出されるのは摂取カロリー・たんぱく質・脂質・炭水化物。" +
                         "欠測日は0kcalとせず、未記録として扱う。" +
                         "食事回数はNutritionRecordのstart/endが近いレコードを1食にまとめて数える。" +
-                        "推定エネルギー収支は摂取−基礎代謝−活動消費で、デバイス推定のため参考値。" +
+                        "参考エネルギー収支(reference*)は摂取−基礎代謝−活動消費を、歩数換算（下限寄り）とバンド値（上限寄り）の" +
+                        "両方で計算したレンジ。参考値で、摂取量や赤字量の指示・減量成否の判定には使わない。" +
                         "PFCエネルギー比は記録グラム×4/9/4kcalを摂取カロリーで割った参考値。",
             )
             number("intakeCaloriesDailyAverage", intakeAverage)
@@ -279,10 +324,19 @@ class HealthToolExecutor(private val repository: HealthRepository) {
                         number("proteinGrams", item.proteinGrams)
                         number("totalFatGrams", item.totalFatGrams)
                         number("carbohydrateGrams", item.carbohydrateGrams)
-                        number(
-                            "estimatedEnergyBalanceKcal",
-                            item.estimatedEnergyBalanceKcal,
-                        )
+                        EnergyModel.dailyBalance(
+                            item,
+                            EnergyModel.dailyActive(item, body, goal?.heightCm, goal?.sex),
+                        )?.let {
+                            number(
+                                "referenceEnergyBalanceLowKcal",
+                                EnergyModel.roundForDisplay(it.lowKcal),
+                            )
+                            number(
+                                "referenceEnergyBalanceHighKcal",
+                                EnergyModel.roundForDisplay(it.highKcal),
+                            )
+                        }
                     })
                 }
             })

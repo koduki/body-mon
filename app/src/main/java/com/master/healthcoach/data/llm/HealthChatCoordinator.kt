@@ -268,6 +268,14 @@ internal fun WeeklySnapshot.existingAiContract(): JsonObject = buildJsonObject {
     proteinEnergyPercent?.let { put("proteinEnergyPercent", it) }
     fatEnergyPercent?.let { put("fatEnergyPercent", it) }
     carbohydrateEnergyPercent?.let { put("carbohydrateEnergyPercent", it) }
+    // Reference range from steps/workouts (lower-leaning) vs the band (upper-leaning).
+    // Inputs (steps, weight, basal) are already part of this contract; the energy
+    // balance range is intentionally not exposed.
+    referenceActiveRangeLowKcal?.let { put("referenceActiveRangeLowKcal", it) }
+    referenceActiveRangeHighKcal?.let { put("referenceActiveRangeHighKcal", it) }
+    if (referenceActiveRangeLowKcal != null && referenceActiveRangeHighKcal != null) {
+        put("referenceActiveValidDays", referenceActiveValidDays)
+    }
 }
 
 private fun Double?.energyRatio(): String =

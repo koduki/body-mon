@@ -220,7 +220,12 @@ class GeminiClient(
         add(buildJsonObject {
             put("functionDeclarations", buildJsonArray {
                 add(function("get_body_composition", "指定期間の体重、脂肪量、除脂肪量を取得します"))
-                add(function("get_activity_summary", "指定期間の歩数、距離、活動消費を取得します"))
+                add(
+                    function(
+                        "get_activity_summary",
+                        "指定期間の歩数、距離、活動消費（バンド値）と、歩数・運動時間から換算した参考活動消費のレンジを取得します",
+                    ),
+                )
                 add(
                     function(
                         "get_exercise_summary",

@@ -35,6 +35,7 @@ object WeeklyReportBuilder {
 
         val currentDaily = dailyInRange(daily, currentStart, today)
         val previousDaily = dailyInRange(daily, previousStart, previousEnd)
+        val trendDaily = dailyInRange(daily, trendStart, today)
         val currentBody = bodyInRange(body, currentStart, today)
         val previousBody = bodyInRange(body, previousStart, previousEnd)
         val trendBody = bodyInRange(body, trendStart, today)
@@ -126,6 +127,28 @@ object WeeklyReportBuilder {
         )
         val carbohydrateAverageGrams = averageDouble(
             currentDaily.mapNotNull { it.carbohydrateGrams },
+        )
+        val activeSummary = EnergyModel.summarizeActive(
+            days = currentDaily,
+            body = body,
+            heightCm = goal?.heightCm,
+            sex = goal?.sex,
+        )
+        val balanceSummary = EnergyModel.summarizeBalance(
+            days = currentDaily,
+            body = body,
+            heightCm = goal?.heightCm,
+            sex = goal?.sex,
+        )
+        val trendIntakeDays = trendDaily.count { it.intakeCaloriesKcal != null }
+        val trendIntakeDailyAverage = averageDouble(trendDaily.mapNotNull { it.intakeCaloriesKcal })
+        val adaptiveTdee = EnergyModel.checkAdaptiveTdee(
+            weightTrendKgPerWeek = weightTrend,
+            intakeDailyAverageKcal = trendIntakeDailyAverage,
+            intakeDaysInTrend = trendIntakeDays,
+            basalCaloriesDailyAverage = averageDouble(currentDaily.mapNotNull { it.basalCaloriesKcal }),
+            deviceActiveDailyAverage = averageDouble(currentDaily.mapNotNull { it.activeCaloriesKcal }),
+            stepModelActiveDailyAverage = activeSummary?.stepModelDailyAverageKcal,
         )
 
         val limitations = buildList {
@@ -287,6 +310,16 @@ object WeeklyReportBuilder {
                     day.mealCount.takeIf { it > 0 }?.toDouble()
                 },
             ),
+            referenceActiveStepModelDailyAverage = activeSummary?.stepModelDailyAverageKcal,
+            referenceActiveRangeLowKcal = activeSummary?.range?.lowKcal,
+            referenceActiveRangeHighKcal = activeSummary?.range?.highKcal,
+            referenceActiveValidDays = activeSummary?.validDays ?: 0,
+            referenceEnergyBalanceLowKcal = balanceSummary?.range?.lowKcal,
+            referenceEnergyBalanceHighKcal = balanceSummary?.range?.highKcal,
+            referenceEnergyBalanceValidDays = balanceSummary?.validDays ?: 0,
+            adaptiveTdeeLowKcal = adaptiveTdee?.inferredTdeeRange?.lowKcal,
+            adaptiveTdeeHighKcal = adaptiveTdee?.inferredTdeeRange?.highKcal,
+            adaptiveTdeeIntakeDays = adaptiveTdee?.intakeDays ?: 0,
         )
     }
 

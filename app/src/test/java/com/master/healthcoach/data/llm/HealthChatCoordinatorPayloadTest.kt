@@ -94,6 +94,44 @@ class HealthChatCoordinatorPayloadTest {
     }
 
     @Test
+    fun `reference active energy range is included in weekly payload while balance range stays on device`() {
+        val snapshot = WeeklySnapshot(
+            weekStart = "2026-07-24",
+            weekEnd = "2026-07-30",
+            fatMassChangeKg = -0.2,
+            leanMassChangeKg = 0.0,
+            weightChangeKg = -0.3,
+            bodyMeasurementDays = 7,
+            stepsDailyAverage = 8_000,
+            activeCaloriesDailyAverage = 400.0,
+            exerciseSessions = 6,
+            exerciseMinutes = 60,
+            strengthMinutes = 60,
+            cardioMinutes = 0,
+            previousWeekStepsDailyAverage = 7_500,
+            previousWeekActiveCaloriesDailyAverage = 380.0,
+            dataLimitations = emptyList(),
+            referenceActiveStepModelDailyAverage = 250.0,
+            referenceActiveRangeLowKcal = 250.0,
+            referenceActiveRangeHighKcal = 400.0,
+            referenceActiveValidDays = 7,
+            referenceEnergyBalanceLowKcal = -200.0,
+            referenceEnergyBalanceHighKcal = -50.0,
+            referenceEnergyBalanceValidDays = 7,
+        )
+
+        val payload = snapshot.existingAiContract().toString()
+
+        assertTrue(payload.contains("\"referenceActiveRangeLowKcal\":250.0"))
+        assertTrue(payload.contains("\"referenceActiveRangeHighKcal\":400.0"))
+        assertTrue(payload.contains("\"referenceActiveValidDays\":7"))
+        assertFalse(payload.contains("referenceActiveStepModelDailyAverage"))
+        assertFalse(payload.contains("referenceEnergyBalanceLowKcal"))
+        assertFalse(payload.contains("referenceEnergyBalanceHighKcal"))
+        assertFalse(payload.contains("referenceEnergyBalanceValidDays"))
+    }
+
+    @Test
     fun `diet start date is excluded from Gemini profile`() {
         val goal = GoalEntity(
             age = 40,

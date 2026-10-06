@@ -102,6 +102,8 @@ import com.master.healthcoach.data.db.NutritionMealEntity
 import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.domain.EnergyBalanceWeightAnalyzer
+import com.master.healthcoach.domain.EnergyModel
+import com.master.healthcoach.domain.EnergyRange
 import com.master.healthcoach.domain.PfcBalance
 import com.master.healthcoach.domain.PfcVerdict
 import com.master.healthcoach.domain.TrendMath
@@ -278,6 +280,10 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
     val todayStr = today.toString()
     val todayDaily = state.daily.firstOrNull { it.date == todayStr }
     val todayBody = state.body.firstOrNull { it.date == todayStr }
+    val todayActive = todayDaily?.let {
+        EnergyModel.dailyActive(it, state.body, state.goal?.heightCm, state.goal?.sex)
+    }
+    val todayBalance = todayDaily?.let { EnergyModel.dailyBalance(it, todayActive) }
     val displayedBody = todayBody ?: state.body.firstOrNull()
     val todayStart = today.atStartOfDay(zoneId).toInstant().toEpochMilli()
     val tomorrowStart = today.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
@@ -476,6 +482,25 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
             }
         }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetricCard(
+                    "参考活動消費",
+                    todayActive?.range?.let { it.activeRangeLabel() } ?: "未取得",
+                    "歩数換算(下限寄り)〜バンド値(上限寄り)",
+                    Modifier.weight(1f),
+                )
+            }
+        }
+        item {
+            Text(
+                "参考活動消費は歩数と運動時間からの換算で、立位・家事などは含みません。" +
+                    "バンド値は手の動きで上振れしやすい傾向があります。どちらが正しいとは断定せず、" +
+                    "体重の28日傾向を優先して見てください。診断や摂取量の目安ではありません。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         item { SectionHeader("食事・栄養", "NutritionRecordのstart/endが近いものを1食にまとめ、PFCを確認") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -500,9 +525,14 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
                     "推定収支",
-                    todayDaily?.estimatedEnergyBalanceKcal?.let { signed(it) + " kcal" }
+                    todayBalance?.let { it.balanceRangeLabel() }
+                        ?: todayDaily?.estimatedEnergyBalanceKcal?.let { signed(it) + " kcal" }
                         ?: "未取得",
-                    "摂取−(基礎+活動)・参考",
+                    if (todayBalance != null) {
+                        "歩数換算〜バンド値・参考"
+                    } else {
+                        "バンド値のみ・参考"
+                    },
                     Modifier.weight(1f),
                 )
                 MetricCard(
@@ -1560,12 +1590,13 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                                 modifier = Modifier.weight(1f),
                             )
                         }
+                        val balanceText = if (report.referenceEnergyBalanceLowKcal != null && report.referenceEnergyBalanceHighKcal != null) {
+                            "${signed(report.referenceEnergyBalanceLowKcal)} 〜 ${signed(report.referenceEnergyBalanceHighKcal)} kcal/日（歩数換算〜バンド値）"
+                        } else {
+                            report.estimatedEnergyBalanceDailyAverage?.let { "${signed(it)} kcal/日（バンド値）" } ?: "未取得"
+                        }
                         Text(
-                            "推定収支 ${
-                                report.estimatedEnergyBalanceDailyAverage?.let {
-                                    "${signed(it)} kcal/日"
-                                } ?: "未取得"
-                            }。摂取−(基礎代謝+活動消費)で、デバイス推定のため参考値です。" +
+                            "推定収支 $balanceText。摂取−(基礎代謝+活動消費)で、デバイス推定・歩数換算による参考レンジです。" +
                                 "あすけんが書き出すのは摂取カロリーとPFCのみです。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1585,12 +1616,15 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
                         Text("参考値の内訳", fontWeight = FontWeight.SemiBold)
+                        val activeText = if (report.referenceActiveRangeLowKcal != null && report.referenceActiveRangeHighKcal != null) {
+                            "${report.referenceActiveRangeLowKcal.roundToLong()} 〜 ${report.referenceActiveRangeHighKcal.roundToLong()} kcal/日（参考レンジ）"
+                        } else {
+                            report.activeCaloriesDailyAverage.kcal("/日")
+                        }
                         Text(
                             "基礎代謝 ${
                                 report.basalCaloriesDailyAverage.kcal("/日")
-                            }・活動消費 ${
-                                report.activeCaloriesDailyAverage.kcal("/日")
-                            }",
+                            }・活動消費 $activeText",
                         )
                         Text(
                             "上の「カロリー収支と体重の対照」で摂取との差を見ます。" +
@@ -1599,6 +1633,33 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+            }
+
+            if (report.adaptiveTdeeLowKcal != null && report.adaptiveTdeeHighKcal != null) {
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                    ) {
+                        Column(
+                            Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            Text("体重トレンド逆算（適応型検証・28日）", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "実効総消費 ${report.adaptiveTdeeLowKcal.roundToLong()} 〜 ${report.adaptiveTdeeHighKcal.roundToLong()} kcal/日" +
+                                    "（食事記録 ${report.adaptiveTdeeIntakeDays}日分に基づく推計）",
+                            )
+                            Text(
+                                "28日間の食事記録と体重トレンドから逆算した参考値です。" +
+                                    "バンド推定や歩数換算との乖離を振り返るための事後検証用で、摂取量の指示ではありません。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -2573,3 +2634,9 @@ private fun formatClock(epochMillis: Long): String = DateTimeFormatter.ofPattern
     .format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))
 private fun formatInstant(epochMillis: Long): String = DateTimeFormatter.ofPattern("M/d HH:mm")
     .format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))
+
+private fun EnergyRange.activeRangeLabel(): String =
+    "${lowKcal.roundToLong()} 〜 ${highKcal.roundToLong()} kcal"
+
+private fun EnergyRange.balanceRangeLabel(): String =
+    "${signed(lowKcal)} 〜 ${signed(highKcal)} kcal"
