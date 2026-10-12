@@ -234,7 +234,7 @@ class HealthToolExecutor(
             put("measurementDays", measured.size)
             put("sleepBaselineMinutes", SLEEP_BASELINE_MINUTES)
             put("sleepBaselineInterpretation", "6時間は本人の最低運用目標。回復十分の判定ではない。達成日はセッション枠で数える。")
-            put("sleepDurationNote", "sleepMinutesは睡眠ステージ合計。ステージ欠測時はセッション枠で代用し、sleepDurationSourceで区別。")
+            put("sleepDurationNote", "sleepMinutesは睡眠ステージ合計。ステージ欠測時はセッション枠で代用し、sleepDurationSourceで区別。sleep_stages_partialは既知区間のみの合計で一部欠測。")
             put(
                 "sleepTargetHitDays",
                 measured.count { (it.sleepSessionMinutes ?: it.sleepMinutes ?: 0L) >= SLEEP_BASELINE_MINUTES },

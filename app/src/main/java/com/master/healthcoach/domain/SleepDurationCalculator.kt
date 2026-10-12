@@ -9,9 +9,14 @@ data class SleepInterval(val start: Instant, val end: Instant)
 data class SleepDurationEstimate(
     val sessionMinutes: Long,
     val sleepMinutes: Long?,
+    val stagesComplete: Boolean = true,
 ) {
     val displayMinutes: Long get() = sleepMinutes ?: sessionMinutes
-    val source: String get() = if (sleepMinutes != null) "sleep_stages" else "session_fallback"
+    val source: String get() = when {
+        sleepMinutes == null -> "session_fallback"
+        !stagesComplete -> "sleep_stages_partial"
+        else -> "sleep_stages"
+    }
 }
 
 object SleepDurationCalculator {
@@ -20,10 +25,14 @@ object SleepDurationCalculator {
         end: Instant,
         sleeping: List<SleepInterval>,
         hasKnownStages: Boolean = sleeping.isNotEmpty(),
+        knownStageIntervals: List<SleepInterval>? = null,
     ): SleepDurationEstimate {
         val sessionMinutes = Duration.between(start, end).toMinutes().coerceAtLeast(0)
         val sleepMinutes = if (hasKnownStages) IntervalDuration.unionMinutes(start, end, sleeping) else null
-        return SleepDurationEstimate(sessionMinutes, sleepMinutes)
+        val stagesComplete = knownStageIntervals?.let {
+            IntervalDuration.unionMinutes(start, end, it) >= sessionMinutes
+        } ?: true
+        return SleepDurationEstimate(sessionMinutes, sleepMinutes, stagesComplete)
     }
 }
 

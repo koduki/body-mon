@@ -29,6 +29,20 @@ class SleepDurationCalculatorTest {
     }
 
     @Test
+    fun `partial known stage coverage is marked incomplete without assuming gaps asleep`() {
+        val intervals = listOf(SleepInterval(start, minute(60)))
+        val estimate = SleepDurationCalculator.calculate(start, minute(420), intervals, knownStageIntervals = intervals)
+        assertEquals(60L, estimate.sleepMinutes)
+        assertEquals("sleep_stages_partial", estimate.source)
+    }
+
+    @Test
+    fun `interval union clips a cycling session crossing midnight and merges duplicates`() {
+        val intervals = listOf(SleepInterval(minute(-10), minute(20)), SleepInterval(start, minute(20)))
+        assertEquals(20L, IntervalDuration.unionMinutes(start, minute(1440), intervals))
+    }
+
+    @Test
     fun `known awake only session is zero sleep rather than a fallback`() {
         val estimate = SleepDurationCalculator.calculate(start, minute(420), emptyList(), hasKnownStages = true)
         assertEquals(0L, estimate.sleepMinutes)

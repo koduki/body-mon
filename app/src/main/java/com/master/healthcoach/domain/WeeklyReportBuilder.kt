@@ -165,8 +165,11 @@ object WeeklyReportBuilder {
             if (currentDaily.count { it.steps != null } < 5) {
                 add("歩数データが5日未満です")
             }
-            if (currentDaily.any { it.sleepMinutes != null && it.sleepDurationSource != "sleep_stages" }) {
+            if (currentDaily.any { it.sleepMinutes != null && it.sleepDurationSource in setOf("session_fallback", "legacy_session") }) {
                 add("睡眠ステージ欠測日はセッション枠で代用しています。推定睡眠時間と同一ではありません")
+            }
+            if (currentDaily.any { it.sleepDurationSource == "sleep_stages_partial" }) {
+                add("一部の睡眠ステージが欠けています。表示は既知の睡眠区間合計で、欠けた区間を睡眠とは仮定しません")
             }
             if (currentSleepValues.size < 5) {
                 add("主睡眠データが5日未満です")

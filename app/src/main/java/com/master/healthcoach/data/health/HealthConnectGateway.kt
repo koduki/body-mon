@@ -227,6 +227,8 @@ class HealthConnectGateway(private val context: Context) {
                         )
                     }.map { SleepInterval(it.startTime, it.endTime) },
                     hasKnownStages = sleep.stages.any { it.stage != SleepSessionRecord.STAGE_TYPE_UNKNOWN },
+                    knownStageIntervals = sleep.stages.filter { it.stage != SleepSessionRecord.STAGE_TYPE_UNKNOWN }
+                        .map { SleepInterval(it.startTime, it.endTime) },
                 )
             }
             val sleepHeartRateSamples = mainSleep?.let { sleep ->

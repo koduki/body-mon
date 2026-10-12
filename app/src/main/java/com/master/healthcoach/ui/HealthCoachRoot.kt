@@ -573,7 +573,11 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
-                    if (todayDaily?.sleepDurationSource == "sleep_stages") "推定睡眠時間" else "睡眠記録枠（代用）",
+                    when (todayDaily?.sleepDurationSource) {
+                        "sleep_stages" -> "推定睡眠時間"
+                        "sleep_stages_partial" -> "睡眠区間合計（一部欠測）"
+                        else -> "睡眠記録枠（代用）"
+                    },
                     todayDaily?.sleepMinutes?.asHoursMinutes() ?: "未取得",
                     listOfNotNull(
                         todayDaily?.sleepStartEpochMillis?.let { formatClock(it) },
@@ -956,7 +960,7 @@ private fun TrendsScreen(state: MainUiState) {
                         summary = "中強度＋高強度×2",
                     )
                 }
-                item { SectionHeader("回復シグナル", "主睡眠と睡眠中心拍を別々に確認") }
+                item { SectionHeader("回復シグナル", "睡眠ステージ合計・欠測時の枠代用を含む。睡眠中心拍も別々に確認") }
                 item {
                     TrendCard(
                         title = "主睡眠",
