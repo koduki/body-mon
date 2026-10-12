@@ -95,6 +95,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.master.healthcoach.BuildConfig
 import com.master.healthcoach.data.db.BodyCompositionEntity
 import com.master.healthcoach.data.db.DailyHealthSummaryEntity
 import com.master.healthcoach.data.db.GoalEntity
@@ -164,7 +165,7 @@ fun HealthCoachRoot(
                     Column {
                         Text("Health Coach", fontWeight = FontWeight.SemiBold)
                         Text(
-                            selectedTab.label,
+                            "${selectedTab.label} · v${BuildConfig.VERSION_NAME}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -273,6 +274,13 @@ private fun PermissionScreen(
         TextButton(onClick = onOpenHealthConnect, modifier = Modifier.align(Alignment.CenterHorizontally)) {
             Text("Health Connectの設定を開く")
         }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "バージョン: ${HealthDataExporter.formatAppVersionLabel()}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        )
     }
 }
 
@@ -1970,6 +1978,28 @@ private fun SettingsScreen(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        SectionHeader("アプリ情報", "現在インストールされているアプリのバージョン")
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("バージョン", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    text = HealthDataExporter.formatAppVersionLabel(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
     }
 
     if (confirmDelete) {
