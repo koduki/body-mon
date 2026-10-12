@@ -1,7 +1,12 @@
 package com.master.healthcoach.data.llm
 
+import com.master.healthcoach.data.db.ChatMessageEntity
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatHistoryPolicyTest {
@@ -67,4 +72,82 @@ class ChatHistoryPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun `annotates turns with relative day and date boundary across yesterday and today`() {
+        val zone = ZoneId.of("Asia/Tokyo")
+        val now = ZonedDateTime.of(2026, 10, 13, 8, 30, 0, 0, zone)
+        val yesterdayNight = ZonedDateTime.of(2026, 10, 12, 22, 15, 0, 0, zone)
+            .toInstant().toEpochMilli()
+        val yesterdayReply = ZonedDateTime.of(2026, 10, 12, 22, 16, 0, 0, zone)
+            .toInstant().toEpochMilli()
+        val todayMorning = ZonedDateTime.of(2026, 10, 13, 8, 29, 0, 0, zone)
+            .toInstant().toEpochMilli()
+
+        val messages = listOf(
+            ChatMessageEntity(
+                id = 1L,
+                role = "user",
+                content = "今日は焼き魚を食べました",
+                createdAtEpochMillis = yesterdayNight,
+            ),
+            ChatMessageEntity(
+                id = 2L,
+                role = "assistant",
+                content = "高たんぱくで良い夕食ですね！",
+                createdAtEpochMillis = yesterdayReply,
+            ),
+            ChatMessageEntity(
+                id = 3L,
+                role = "user",
+                content = "おはよう！昨日の歩数と今日の体重どうかな？",
+                createdAtEpochMillis = todayMorning,
+            ),
+        )
+
+        val turns = ChatHistoryPolicy.formatTurnsWithChronology(
+            messages = messages,
+            currentMessageId = 3L,
+            now = now,
+        )
+
+        assertEquals(3, turns.size)
+        assertTrue(turns[0].text.contains("2026-10-12"))
+        assertTrue(turns[0].text.contains("（昨日）"))
+        assertTrue(turns[0].text.endsWith("今日は焼き魚を食べました"))
+        assertTrue(turns[1].text.contains("（昨日）"))
+        assertTrue(
+            turns[2].text.startsWith(
+                "【日付変更: 2026-10-12（昨日） → 2026-10-13（今日）】",
+            ),
+        )
+        assertTrue(turns[2].text.contains("2026-10-13"))
+        assertTrue(turns[2].text.contains("（今日）"))
+        assertTrue(turns[2].text.endsWith("おはよう！昨日の歩数と今日の体重どうかな？"))
+    }
+
+    @Test
+    fun `strips echoed leading timestamp and date boundary tags`() {
+        val raw = "【日付変更: 2026-10-12（昨日） → 2026-10-13（今日）】\n" +
+            "[発言日時: 2026-10-13(火) 08:30（今日）]\n" +
+            "おはようございます！昨日の歩数は8,200歩でした。"
+        assertEquals(
+            "おはようございます！昨日の歩数は8,200歩でした。",
+            ChatHistoryPolicy.stripLeadingTimestampTag(raw),
+        )
+        assertEquals(
+            "おはようございます！",
+            ChatHistoryPolicy.stripLeadingTimestampTag("おはようございます！"),
+        )
+    }
+
+    @Test
+    fun `computes relative day labels accurately`() {
+        val today = LocalDate.of(2026, 10, 13)
+        assertEquals("今日", ChatHistoryPolicy.relativeDayLabel(today, today))
+        assertEquals("昨日", ChatHistoryPolicy.relativeDayLabel(today.minusDays(1), today))
+        assertEquals("一昨日", ChatHistoryPolicy.relativeDayLabel(today.minusDays(2), today))
+        assertEquals("5日前", ChatHistoryPolicy.relativeDayLabel(today.minusDays(5), today))
+    }
 }
+

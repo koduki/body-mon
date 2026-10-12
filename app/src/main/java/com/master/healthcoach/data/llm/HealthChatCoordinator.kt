@@ -8,6 +8,10 @@ import com.master.healthcoach.domain.BodyRecompositionCoachPolicy
 import com.master.healthcoach.domain.CoachAssessmentEngine
 import com.master.healthcoach.domain.CoachResponseComposer
 import com.master.healthcoach.domain.WeeklySnapshot
+import java.time.Instant
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -40,29 +44,23 @@ class HealthChatCoordinator(
                 .takeIf { it.isNotEmpty() }
                 ?.joinToString("\n") { it.displayName },
         )
+        val now = ZonedDateTime.now()
         val memory = repository.getMemory()?.summary
         val goal = repository.getGoal()
-        val recent = repository.getRecentMessages(ChatHistoryPolicy.CONTEXT_MESSAGE_LIMIT).map { messageEntity ->
-            GeminiTurn(
-                role = messageEntity.role,
-                text = messageEntity.content,
-                attachments = if (messageEntity.id == messageId) attachments else emptyList(),
-            )
-        }
+        val recent = ChatHistoryPolicy.formatTurnsWithChronology(
+            messages = repository.getRecentMessages(ChatHistoryPolicy.CONTEXT_MESSAGE_LIMIT),
+            currentMessageId = messageId,
+            attachments = attachments,
+            now = now,
+        )
         val modelAnswer = gemini.chatWithTools(
             apiKey = apiKey,
             model = apiKeyStore.modelId(),
-            systemInstruction = chatSystemInstruction(memory, goal?.existingAiProfile()),
+            systemInstruction = chatSystemInstruction(memory, goal?.existingAiProfile(), now),
             turns = recent,
             toolExecutor = tools::execute,
         )
-        val snapshot = latestSnapshot()
-        val answer = snapshot?.let {
-            CoachResponseComposer.appendToChat(
-                modelAnswer = modelAnswer,
-                assessment = CoachAssessmentEngine.assess(it),
-            )
-        } ?: modelAnswer
+        val answer = ChatHistoryPolicy.stripLeadingTimestampTag(modelAnswer)
         repository.addMessage("assistant", answer)
         runCatching { refreshHabitMemory(apiKey, force = false) }
         repository.pruneChatHistory()
@@ -93,7 +91,8 @@ class HealthChatCoordinator(
             appendLine("会話から確認済みの習慣: ${repository.getMemory()?.summary.orEmpty()}")
             appendLine("分析の軸は次の2点です。")
             appendLine(
-                "1) カロリー収支の比較: 摂取カロリー平均と、基礎代謝・活動消費の平均を対照する。" +
+                "1) カロリー収支の比較: 摂取カロリー平均と、基礎代謝・活動消費（歩数ベースを基本とし、" +
+                    "メトリクスとの乖離が大きい日は差分の50%を参考値として加えたレンジ）を対照する。" +
                     "推定エネルギー収支そのものは端末内専用のため送っていません。",
             )
             appendLine(
@@ -133,24 +132,40 @@ class HealthChatCoordinator(
         if (userMessages.isEmpty()) return
         if (!force && userMessages.size < HABIT_REFRESH_USER_MESSAGES) return
         val latestId = unsummarized.maxOf { it.id }
+        val zone = ZonedDateTime.now().zone
         val summary = gemini.summarizeConversation(
             apiKey = apiKey,
             model = apiKeyStore.modelId(),
             currentMemory = memory?.summary,
-            messages = userMessages.map { GeminiTurn(it.role, it.content) },
+            messages = userMessages.map { msg ->
+                val date = Instant.ofEpochMilli(msg.createdAtEpochMillis).atZone(zone).toLocalDate()
+                GeminiTurn(msg.role, "[$date] ${msg.content}")
+            },
         )
         repository.saveMemory(summary, latestId)
     }
 
-    private suspend fun latestSnapshot(): WeeklySnapshot? = runCatching {
-        val report = repository.getLatestWeekly() ?: repository.rebuildWeekly()
-        json.decodeFromString<WeeklySnapshot>(report.snapshotJson)
-    }.getOrNull()
-
-    private fun chatSystemInstruction(memory: String?, profile: String?): String = """
-        あなたは利用者に親身に伴走するパーソナル健康コーチです。
+    internal fun chatSystemInstruction(
+        memory: String?,
+        profile: String?,
+        now: ZonedDateTime = ZonedDateTime.now(),
+    ): String {
+        val today = now.toLocalDate()
+        val yesterday = today.minusDays(1)
+        val dayBeforeYesterday = today.minusDays(2)
+        val formattedNow = now.format(
+            DateTimeFormatter.ofPattern("yyyy-MM-dd(E) HH:mm", Locale.JAPANESE),
+        )
+        return """
+        あなたは利用者に親身に伴走するパーソナル健康コーチ（ボディメイク・栄養・運動の専門家）です。
         専門知識を持ちながらも、親しみやすく自然で温かみのある日本語（丁寧語・ですます調）で対話してください。
-        定型的な箇条書きや機械的なテンプレート回答に固執せず、利用者の発言の意図や文脈に合わせた自然な会話のキャッチボールを行ってください。
+        定型的な箇条書きや機械的なテンプレート回答（「専門家ビュー」「評価:」「今週の一手:」「判定方針:」などの固定項目）は出力せず、メトリクスをもとに専門家として自然な会話のキャッチボールを行ってください。
+
+        【現在の基準日時と時系列ルール（厳守）】
+        ・現在日時: $formattedNow
+        ・今日: $today / 昨日: $yesterday / 一昨日: $dayBeforeYesterday
+        ・各チャット履歴の先頭には `[発言日時: YYYY-MM-DD(曜) HH:mm（今日/昨日/...）]` が付き、日付をまたぐ箇所には `【日付変更】` が入っています。会話が昨日から今日へ連続していても、過去の発言内の「今日」「昨日」「今朝」「さっき」は必ずその発言日時の時点で解釈し、昨日の出来事や食事・運動を今日のことと混同してはいけません。（※あなたの返答に `[発言日時: ...]` タグを付ける必要はありません）
+        ・ツールのメトリクス応答には `todayDate`（今日）、`yesterdayDate`（昨日）、`hasTodayRecord`（今日の記録有無）、および各レコードの `date` と `relativeDay`（「今日」「昨日」など）が含まれます。今日まだ未測定・未記録の項目では、配列の最新要素が「昨日」以前のレコードになります。必ず `date` と `relativeDay` を確認し、昨日のメトリクスを今日の数値として話したり、昨日と今日を取り違えたりしないでください。
 
         【対話・コミュニケーションの指針】
         ・利用者の日々の頑張りや悩み、質問にまず共感し、聞かれたことに対して直接的かつ分かりやすく答えてください。
@@ -158,12 +173,13 @@ class HealthChatCoordinator(
         ・食事やメニューの相談には、低脂質（PFCバランス）の観点から前向きで実践しやすいアイデアを提案してください。
         ・疑問点がある場合も尋問のようにならず、「〜はどうでしたか？」など会話の流れの中で自然に尋ねてください。
 
-        【データ利用と安全境界】
-        ・Health Connectの健康データ（体重、歩数、活動消費、運動、睡眠、食事など）が必要な場合のみ、提供されたツール（Function Calling）を呼び出して確認してください。データがない場合は数値を勝手に推測せず、素直に状況を伝えてください。
-        ・BIA由来の体組成（体脂肪率・除脂肪量）は水分等で日々変動するため、単日の値で一喜一憂せず長期傾向を大切にする姿勢で接してください。
-        ・除脂肪量は骨格筋量そのものではなく、筋肉維持の参考指標です。
-        ・活動消費（Xiaomi Band値）と歩数換算値は「参考レンジ」として扱い、どちらかを正解と決めつけたり、そこからカロリー赤字を逆算して指示したりしないでください。
-        ・食事記録がある日は提供された摂取カロリーとPFCを観測値として扱いますが、欠測日を0kcalとせず、消費カロリーから摂取量や赤字量を逆算しません。
+        【専門家としてのメトリクス評価基準】
+        ・減量ペースは筋力と回復を守りながら脂肪を落とすことを優先し、28日トレンドで体重の0.3〜0.7%/週減を運用目安とします。BIA由来の体組成（体脂肪率・脂肪量・除脂肪量）は水分等で日々変動するため単日値で一喜一憂せず、7日中央値や28日傾向で判断します。除脂肪量は骨格筋量そのものではなく筋肉維持の参考指標です。
+        ・睡眠のベースライン（睡眠機会の目安）は生活リズムに合わせて「主睡眠6時間以上」とします（7時間を一律の基準にしません）。睡眠中心拍の変動も回復状態の参考として見ます。
+        ・活動消費カロリーは「歩数と運動時間からの換算値（referenceStepModelActiveKcal）」を基本とし、メトリクス（バンド値 activeCaloriesKcal）との乖離が大きい日（差100kcal以上）は差分の50%を参考値として加えて評価します（referenceEvaluatedActiveKcal / referenceActiveRangeHighKcal）。消費カロリーから摂取量や赤字量を逆算して指示することはせず、体重の推移と対照して評価します。
+        ・食事方針は低脂質ダイエット（脂質エネルギー比15〜25%目安、30%超は出どころ確認、たんぱく質は体重1kgあたり1.6g以上目安）です。食事記録がある日のみを観測値とし、欠測日を0kcal扱いしません。
+        ・Health Connectの「その他のワークアウト」は朝の5分ルーティン（軽い筋トレ＋有酸素の習慣KPI）として扱い、筋力維持そのものは月1回のパーソナルでの重量・回数で確認します。
+        ・Health Connectの健康データが必要な場合のみ提供されたツールを呼び出して確認し、データがない場合は数値を推測せず素直に伝えてください。
         ・医療診断、疾患の推測、服薬指示、極端な食事制限（断食や過度な糖質/脂質カット）は絶対に行いません。
         ・添付された画像・文書は利用者がこのターンで明示的に送ったものだけを確認し、画像からの食品量・栄養素・カロリーは推定であることを踏まえて自然に言及してください。
 
@@ -172,7 +188,8 @@ class HealthChatCoordinator(
 
         確認済みの習慣・生活上の制約（メモリー）:
         ${memory.orEmpty()}
-    """.trimIndent()
+        """.trimIndent()
+    }
 
     private fun weeklyAnalysisSystemInstruction(memory: String?, profile: String?): String = """
         あなたは個人用ダイエット支援アプリの健康コーチです。回答は日本語で簡潔かつ具体的にします。

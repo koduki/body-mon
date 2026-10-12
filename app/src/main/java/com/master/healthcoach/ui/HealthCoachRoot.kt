@@ -487,15 +487,15 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 MetricCard(
                     "参考活動消費",
                     todayActive?.range?.let { it.activeRangeLabel() } ?: "未取得",
-                    "歩数換算(下限寄り)〜バンド値(上限寄り)",
+                    "歩数ベース（大乖離日は差の50%加算）",
                     Modifier.weight(1f),
                 )
             }
         }
         item {
             Text(
-                "参考活動消費は歩数と運動時間からの換算で、立位・家事などは含みません。" +
-                    "バンド値は手の動きで上振れしやすい傾向があります。どちらが正しいとは断定せず、" +
+                "活動消費は歩数と運動時間からの換算値を基本とし、メトリクス（バンド値）との乖離が大きい日" +
+                    "（差100kcal以上）は差分の50%を参考値として加えて評価します。" +
                     "体重の28日傾向を優先して見てください。診断や摂取量の目安ではありません。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -529,7 +529,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                         ?: todayDaily?.estimatedEnergyBalanceKcal?.let { signed(it) + " kcal" }
                         ?: "未取得",
                     if (todayBalance != null) {
-                        "歩数換算〜バンド値・参考"
+                        "歩数ベース〜参考評価値"
                     } else {
                         "バンド値のみ・参考"
                     },
@@ -979,7 +979,7 @@ private fun TrendsScreen(state: MainUiState) {
                             )
                         },
                         summary = if (page == 0) {
-                            state.weekly?.sleepTargetHitDays?.let { "7時間以上 $it/7日" }
+                            state.weekly?.sleepTargetHitDays?.let { "6時間以上 $it/7日" }
                         } else {
                             null
                         },
@@ -1454,7 +1454,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
-                                title = "7時間以上",
+                                title = "6時間以上",
                                 mainValue = report.sleepTargetHitDays?.let { "$it / 7日" }
                                     ?: "未取得",
                                 subValue = "主睡眠の達成日",
@@ -1591,12 +1591,12 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             )
                         }
                         val balanceText = if (report.referenceEnergyBalanceLowKcal != null && report.referenceEnergyBalanceHighKcal != null) {
-                            "${signed(report.referenceEnergyBalanceLowKcal)} 〜 ${signed(report.referenceEnergyBalanceHighKcal)} kcal/日（歩数換算〜バンド値）"
+                            EnergyRange(report.referenceEnergyBalanceLowKcal, report.referenceEnergyBalanceHighKcal).balanceRangeLabel() + "/日（歩数ベース〜参考評価値）"
                         } else {
                             report.estimatedEnergyBalanceDailyAverage?.let { "${signed(it)} kcal/日（バンド値）" } ?: "未取得"
                         }
                         Text(
-                            "推定収支 $balanceText。摂取−(基礎代謝+活動消費)で、デバイス推定・歩数換算による参考レンジです。" +
+                            "推定収支 $balanceText。摂取−(基礎代謝+活動消費)で、歩数換算を基本とし乖離が大きい日は差の50%を加えた参考レンジです。" +
                                 "あすけんが書き出すのは摂取カロリーとPFCのみです。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1617,7 +1617,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                     ) {
                         Text("参考値の内訳", fontWeight = FontWeight.SemiBold)
                         val activeText = if (report.referenceActiveRangeLowKcal != null && report.referenceActiveRangeHighKcal != null) {
-                            "${report.referenceActiveRangeLowKcal.roundToLong()} 〜 ${report.referenceActiveRangeHighKcal.roundToLong()} kcal/日（参考レンジ）"
+                            EnergyRange(report.referenceActiveRangeLowKcal, report.referenceActiveRangeHighKcal).activeRangeLabel() + "/日（歩数ベース〜参考評価値）"
                         } else {
                             report.activeCaloriesDailyAverage.kcal("/日")
                         }
@@ -1628,8 +1628,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         )
                         Text(
                             "上の「カロリー収支と体重の対照」で摂取との差を見ます。" +
-                                "デバイス推定の差はエネルギー赤字の断定には使わず、" +
-                                "体重ペースと行動KPIで調整します。",
+                                "活動消費は歩数ベースを基本とし、メトリクスとの乖離が大きい日は差分の50%を参考値として加えて評価します。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -2635,8 +2634,14 @@ private fun formatClock(epochMillis: Long): String = DateTimeFormatter.ofPattern
 private fun formatInstant(epochMillis: Long): String = DateTimeFormatter.ofPattern("M/d HH:mm")
     .format(Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()))
 
-private fun EnergyRange.activeRangeLabel(): String =
-    "${lowKcal.roundToLong()} 〜 ${highKcal.roundToLong()} kcal"
+private fun EnergyRange.activeRangeLabel(): String {
+    val low = lowKcal.roundToLong()
+    val high = highKcal.roundToLong()
+    return if (low == high) "$low kcal" else "$low 〜 $high kcal"
+}
 
-private fun EnergyRange.balanceRangeLabel(): String =
-    "${signed(lowKcal)} 〜 ${signed(highKcal)} kcal"
+private fun EnergyRange.balanceRangeLabel(): String {
+    val low = lowKcal.roundToLong()
+    val high = highKcal.roundToLong()
+    return if (low == high) "${signed(lowKcal)} kcal" else "${signed(lowKcal)} 〜 ${signed(highKcal)} kcal"
+}

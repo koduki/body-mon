@@ -19,7 +19,7 @@ object WeeklyReportBuilder {
     private const val TREND_DAYS = 28L
     private const val MIN_TREND_MEASUREMENTS = 8
     private const val MIN_TREND_SPAN_DAYS = 14L
-    private const val SLEEP_TARGET_MINUTES = 7 * 60L
+    private const val SLEEP_TARGET_MINUTES = 6 * 60L
 
     fun build(
         today: LocalDate,

@@ -187,11 +187,34 @@ class WeeklyReportBuilderTest {
         assertNotNull(report.dataLimitations.find { it.contains("食事記録") })
     }
 
+    @Test
+    fun `counts sleep target hit days using 6 hour baseline`() {
+        val today = LocalDate.of(2026, 7, 30)
+        val sleepDurations = listOf(360L, 380L, 410L, 355L, 330L, 420L, 370L)
+        val daily = sleepDurations.mapIndexed { index, mins ->
+            daily(
+                date = today.minusDays(index.toLong()),
+                sleepMinutes = mins,
+            )
+        }
+
+        val report = WeeklyReportBuilder.build(
+            today = today,
+            daily = daily,
+            body = emptyList(),
+            zoneId = zoneId,
+        )
+
+        // 360, 380, 410, 420, 370 are >= 360 (5 days); 355 and 330 are < 360
+        assertEquals(5, report.sleepTargetHitDays)
+    }
+
     private fun daily(
         date: LocalDate,
         steps: Long = 8_000,
         strengthMinutes: Long = 0,
         morningRoutineMinutes: Long = 5,
+        sleepMinutes: Long = 450,
         sleepHeartRate: Long = 68,
         intakeCaloriesKcal: Double? = 2_000.0,
         proteinGrams: Double? = 130.0,
@@ -207,7 +230,7 @@ class WeeklyReportBuilderTest {
         morningRoutineMinutes = morningRoutineMinutes,
         cardioMinutes = morningRoutineMinutes,
         exerciseSessionCount = if (strengthMinutes + morningRoutineMinutes > 0) 1 else 0,
-        sleepMinutes = 450,
+        sleepMinutes = sleepMinutes,
         sleepStartEpochMillis = date.minusDays(1).atTime(23, 0)
             .atZone(zoneId).toInstant().toEpochMilli(),
         sleepEndEpochMillis = date.atTime(6, 30)

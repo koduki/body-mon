@@ -12,15 +12,32 @@ data class EnergyRange(val lowKcal: Double, val highKcal: Double) {
     val widthKcal: Double get() = highKcal - lowKcal
 }
 
-/** One day's step-model and device values for the same day. */
+/** One day's step-model base value and device metric value for the same day. */
 data class ActiveEnergyEstimate(
     val stepModelKcal: Double,
     val deviceKcal: Double,
 ) {
-    /** Step model tends to undercount non-step activity; the band tends to overcount. */
+    val discrepancyKcal: Double = deviceKcal - stepModelKcal
+
+    val isLargeDiscrepancy: Boolean =
+        kotlin.math.abs(discrepancyKcal) >= EnergyModel.LARGE_DISCREPANCY_THRESHOLD_KCAL
+
+    /**
+     * Step model is the baseline; on days with a large discrepancy from the device
+     * metric, 50% of the difference is added as a reference value.
+     */
+    val discrepancyReferenceAddKcal: Double =
+        if (isLargeDiscrepancy) {
+            discrepancyKcal * EnergyModel.DISCREPANCY_REFERENCE_FACTOR
+        } else {
+            0.0
+        }
+
+    val evaluatedKcal: Double = stepModelKcal + discrepancyReferenceAddKcal
+
     val range: EnergyRange = EnergyRange(
-        lowKcal = min(stepModelKcal, deviceKcal),
-        highKcal = max(stepModelKcal, deviceKcal),
+        lowKcal = min(stepModelKcal, evaluatedKcal),
+        highKcal = max(stepModelKcal, evaluatedKcal),
     )
 }
 
@@ -28,7 +45,9 @@ data class ActiveEnergyEstimate(
 data class ActiveEnergySummary(
     val stepModelDailyAverageKcal: Double,
     val deviceDailyAverageKcal: Double,
+    val evaluatedDailyAverageKcal: Double,
     val range: EnergyRange,
+    val largeDiscrepancyDays: Int,
     val validDays: Int,
 )
 
@@ -40,16 +59,15 @@ data class EnergyBalanceSummary(
 /**
  * Reference estimate of active energy expenditure from steps and workout sessions.
  *
- * It complements, and never replaces, the device value: steps miss standing, desk and
- * household movement (so this is a lower-leaning estimate), while the band can pick up
- * wrist motion and heart-rate spikes (so it is an upper-leaning estimate). Results are
- * therefore expressed as a range. Nothing here is persisted or used for verdicts.
+ * Step/workout-based active expenditure is used as the baseline. On days where the
+ * device metric diverges largely from the step-based estimate, 50% of the difference is
+ * added as a reference value for evaluation.
  *
  * Constants are fixed and versioned on purpose: tuning them to hit a desired number
  * would make the metric meaningless.
  */
 object EnergyModel {
-    const val VERSION = "2026-10-step-v1"
+    const val VERSION = "2026-10-step-v2"
 
     /** Net (above-rest) cost of level walking, kcal per kg per km. */
     const val WALKING_NET_KCAL_PER_KG_KM = 0.5
@@ -66,16 +84,21 @@ object EnergyModel {
     const val MIN_STEP_LENGTH_METERS = 0.4
     const val MAX_STEP_LENGTH_METERS = 1.1
 
+    /** Threshold for treating the gap between step-based and device active kcal as large. */
+    const val LARGE_DISCREPANCY_THRESHOLD_KCAL = 100.0
+
+    /** Portion of (device - stepModel) added as a reference value on large-discrepancy days. */
+    const val DISCREPANCY_REFERENCE_FACTOR = 0.5
+
     const val WEIGHT_WINDOW_DAYS = 7L
     const val WEIGHT_FALLBACK_DAYS = 30L
     const val MIN_VALID_DAYS = 4
     const val DISPLAY_ROUNDING_KCAL = 10.0
 
     const val INTERPRETATION =
-        "歩数と運動時間から換算した参考値で、立位・家事などの活動は含まれないため下限寄りです。" +
-            "バンド値は手の動きや心拍で上振れしやすく上限寄りです。" +
-            "どちらが正しいかは断定せず、体重の28日傾向を優先してください。" +
-            "診断や摂取量の指示には使いません。"
+        "活動消費は歩数と運動時間からの換算値を基本とし、メトリクス（バンド値）との乖離が大きい日" +
+            "（差100kcal以上）は差分の50%を参考値として加えて評価します。" +
+            "体重の28日傾向を優先してください。診断や摂取量の指示には使いません。"
 
     /**
      * Weight as known on [date]: median of the 7 days up to [date], otherwise the most
@@ -178,13 +201,18 @@ object EnergyModel {
         if (estimates.size < MIN_VALID_DAYS) return null
         val model = estimates.map { it.stepModelKcal }.average()
         val device = estimates.map { it.deviceKcal }.average()
+        val evaluated = estimates.map { it.evaluatedKcal }.average()
+        val low = estimates.map { it.range.lowKcal }.average()
+        val high = estimates.map { it.range.highKcal }.average()
         return ActiveEnergySummary(
             stepModelDailyAverageKcal = roundForDisplay(model),
             deviceDailyAverageKcal = roundForDisplay(device),
+            evaluatedDailyAverageKcal = roundForDisplay(evaluated),
             range = EnergyRange(
-                lowKcal = roundForDisplay(min(model, device)),
-                highKcal = roundForDisplay(max(model, device)),
+                lowKcal = roundForDisplay(low),
+                highKcal = roundForDisplay(high),
             ),
+            largeDiscrepancyDays = estimates.count { it.isLargeDiscrepancy },
             validDays = estimates.size,
         )
     }
