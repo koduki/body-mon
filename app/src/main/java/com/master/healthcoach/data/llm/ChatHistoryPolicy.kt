@@ -14,6 +14,7 @@ import java.util.Locale
  */
 object ChatHistoryPolicy {
     const val CONTEXT_MESSAGE_LIMIT = 20
+    const val RETENTION_DAYS = 28L
 
     private val TURN_TIMESTAMP_FORMATTER: DateTimeFormatter =
         DateTimeFormatter.ofPattern("yyyy-MM-dd(E) HH:mm", Locale.JAPANESE)
@@ -37,6 +38,33 @@ object ChatHistoryPolicy {
         val oldestKeptId = messageIdsAscending[messageIdsAscending.size - keepRecent]
         val maxDeletable = minOf(oldestKeptId - 1, summarizedThroughMessageId)
         return maxDeletable.takeIf { cutoff -> messageIdsAscending.any { it <= cutoff } }
+    }
+
+    /**
+     * Highest message id that may be deleted while preserving both the recent [keepRecent]
+     * window and all messages within the 28-day retention window ([retentionCutoffEpochMillis]).
+     */
+    fun maxDeletableMessageIdForRetention(
+        messagesAscending: List<ChatMessageEntity>,
+        summarizedThroughMessageId: Long,
+        retentionCutoffEpochMillis: Long,
+        keepRecent: Int = CONTEXT_MESSAGE_LIMIT,
+    ): Long? {
+        val sorted = messagesAscending.sortedBy { it.id }
+        val windowMaxDeletable = maxDeletableMessageId(
+            messageIdsAscending = sorted.map { it.id },
+            summarizedThroughMessageId = summarizedThroughMessageId,
+            keepRecent = keepRecent,
+        ) ?: return null
+        val firstRetainedByDate = sorted.firstOrNull {
+            it.createdAtEpochMillis >= retentionCutoffEpochMillis
+        }
+        val maxDeletable = if (firstRetainedByDate != null) {
+            minOf(windowMaxDeletable, firstRetainedByDate.id - 1)
+        } else {
+            windowMaxDeletable
+        }
+        return maxDeletable.takeIf { cutoff -> sorted.any { it.id <= cutoff } }
     }
 
     /** Relative day label anchored to [today] (e.g. 今日, 昨日, 一昨日, 3日前). */

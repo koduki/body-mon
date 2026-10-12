@@ -14,10 +14,15 @@ import com.master.healthcoach.data.db.WeeklyReportEntity
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.data.health.HealthConnectGateway
 import com.master.healthcoach.data.llm.ChatHistoryPolicy
+import com.master.healthcoach.domain.HealthDataExporter
 import com.master.healthcoach.domain.WeeklyReportBuilder
+import com.master.healthcoach.domain.WeeklySnapshot
 import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -108,14 +113,14 @@ class HealthRepository(
 
     suspend fun getExerciseSessions(from: LocalDate, to: LocalDate) =
         dao.getExerciseSessions(
-            from.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
-            to.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() - 1,
+            from.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            to.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() - 1,
         )
 
     suspend fun getNutritionMeals(from: LocalDate, to: LocalDate) =
         dao.getNutritionMeals(
-            from.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli(),
-            to.plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() - 1,
+            from.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+            to.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() - 1,
         )
 
     suspend fun addMessage(
@@ -153,19 +158,53 @@ class HealthRepository(
     }
 
     /**
-     * Drops summarized turns outside the shared recent window so the chat screen
-     * and Room stay aligned with the Gemini context budget.
+     * Drops summarized turns only when they are outside both the recent prompt window
+     * ([keepRecent]) and the 28-day retention window ([ChatHistoryPolicy.RETENTION_DAYS]).
      */
     suspend fun pruneChatHistory(
         keepRecent: Int = ChatHistoryPolicy.CONTEXT_MESSAGE_LIMIT,
+        today: LocalDate = LocalDate.now(),
+        zoneId: ZoneId = ZoneId.systemDefault(),
     ) {
         val memory = dao.getMemory() ?: return
-        val maxDeletable = ChatHistoryPolicy.maxDeletableMessageId(
-            messageIdsAscending = dao.getMessageIds(),
+        val retentionCutoffEpochMillis = today
+            .minusDays(ChatHistoryPolicy.RETENTION_DAYS - 1)
+            .atStartOfDay(zoneId)
+            .toInstant()
+            .toEpochMilli()
+        val maxDeletable = ChatHistoryPolicy.maxDeletableMessageIdForRetention(
+            messagesAscending = dao.getAllMessages(),
             summarizedThroughMessageId = memory.summarizedThroughMessageId,
+            retentionCutoffEpochMillis = retentionCutoffEpochMillis,
             keepRecent = keepRecent,
         ) ?: return
         dao.deleteMessagesUpTo(maxDeletable)
+    }
+
+    suspend fun exportTwentyEightDaysJson(
+        exportedAt: ZonedDateTime = ZonedDateTime.now(),
+    ): String {
+        val zoneId = exportedAt.zone
+        val today = exportedAt.toLocalDate()
+        val (from, to) = HealthDataExporter.dateRange(today)
+        val (startMillis, endMillis) = HealthDataExporter.epochRange(from, to, zoneId)
+        // Export current definitions and the requested day's report, never a stale cache.
+        val weeklyEntity = rebuildWeekly(today)
+        val weeklySnapshot = runCatching {
+            json.decodeFromString<WeeklySnapshot>(weeklyEntity.snapshotJson)
+        }.getOrNull()
+        val payload = HealthDataExporter.buildPayload(
+            exportedAt = exportedAt,
+            daily = dao.getDaily(from.toString(), to.toString()),
+            body = dao.getBody(from.toString(), to.toString()),
+            exerciseSessions = dao.getExerciseSessions(startMillis, endMillis),
+            nutritionMeals = dao.getNutritionMeals(startMillis, endMillis),
+            goal = dao.getGoal(),
+            weeklySnapshot = weeklySnapshot,
+            chatMessages = dao.getMessagesInRange(startMillis, endMillis),
+            conversationMemory = dao.getMemory(),
+        )
+        return HealthDataExporter.encodeToJson(payload)
     }
 
     suspend fun clearAll() {

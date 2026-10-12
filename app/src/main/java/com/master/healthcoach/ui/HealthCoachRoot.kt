@@ -104,6 +104,7 @@ import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.domain.EnergyBalanceWeightAnalyzer
 import com.master.healthcoach.domain.EnergyModel
 import com.master.healthcoach.domain.EnergyRange
+import com.master.healthcoach.domain.HealthDataExporter
 import com.master.healthcoach.domain.PfcBalance
 import com.master.healthcoach.domain.PfcVerdict
 import com.master.healthcoach.domain.TrendMath
@@ -142,6 +143,7 @@ fun HealthCoachRoot(
     onAddChatAttachments: (List<Uri>) -> Unit,
     onRemoveChatAttachment: (String) -> Unit,
     onAnalyzeWeek: () -> Unit,
+    onExportData: (Uri) -> Unit = {},
     onClearLocalData: () -> Unit,
     onMessageShown: () -> Unit,
 ) {
@@ -214,6 +216,7 @@ fun HealthCoachRoot(
                         onClearApiKey = onClearApiKey,
                         onRequestPermissions = onRequestPermissions,
                         onOpenHealthConnect = onOpenHealthConnect,
+                        onExportData = onExportData,
                         onClearLocalData = onClearLocalData,
                     )
                 }
@@ -1752,6 +1755,7 @@ private fun SettingsScreen(
     onClearApiKey: () -> Unit,
     onRequestPermissions: () -> Unit,
     onOpenHealthConnect: () -> Unit,
+    onExportData: (Uri) -> Unit,
     onClearLocalData: () -> Unit,
 ) {
     var age by rememberSaveable(state.goal) { mutableStateOf(state.goal?.age?.toString().orEmpty()) }
@@ -1769,6 +1773,13 @@ private fun SettingsScreen(
     var apiKey by rememberSaveable { mutableStateOf("") }
     var model by rememberSaveable(state.modelId) { mutableStateOf(state.modelId) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri != null) {
+            onExportData(uri)
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp, 10.dp, 16.dp, 34.dp),
@@ -1910,7 +1921,7 @@ private fun SettingsScreen(
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         SectionHeader(
             "会話メモリー",
-            "チャットは直近20件のみ表示します。それ以前の内容は習慣・制約の要約としてここに残ります",
+            "チャット画面は直近20件を表示し、28日分の履歴を保持します。古い会話は習慣・制約の要約としてここに残ります",
         )
         Card(
             colors = CardDefaults.cardColors(
@@ -1932,7 +1943,23 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        SectionHeader("データ管理", "バックアップはなく、削除後は元に戻せません")
+        SectionHeader("データ管理", "28日間の実測データと会話履歴のJSON出力・端末内データの削除")
+        Button(
+            onClick = { exportLauncher.launch(HealthDataExporter.defaultFileName()) },
+            enabled = !state.isExporting,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            if (state.isExporting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Icon(Icons.Default.Description, null)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text("28日間の実測データと会話履歴をJSON出力")
+        }
         OutlinedButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Default.Delete, null)
             Spacer(Modifier.width(8.dp))
