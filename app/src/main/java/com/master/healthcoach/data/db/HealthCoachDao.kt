@@ -74,6 +74,9 @@ interface HealthCoachDao {
     @Query("SELECT * FROM body_composition_daily WHERE date BETWEEN :from AND :to ORDER BY date")
     suspend fun getBody(from: String, to: String): List<BodyCompositionEntity>
 
+    @Query("SELECT EXISTS(SELECT 1 FROM daily_health_summary WHERE date >= :from AND sleepDurationSource = 'legacy_session')")
+    suspend fun needsMetricBackfill(from: String): Boolean
+
     @Query("SELECT MIN(date) FROM daily_health_summary")
     suspend fun earliestDailyDate(): String?
 

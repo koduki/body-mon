@@ -32,6 +32,9 @@ import com.master.healthcoach.domain.NutritionMealClusterer
 import com.master.healthcoach.domain.NutritionRecordSnapshot
 import com.master.healthcoach.domain.NutritionWriteShape
 import com.master.healthcoach.domain.TimedMeasurement
+import com.master.healthcoach.domain.IntervalDuration
+import com.master.healthcoach.domain.SleepDurationCalculator
+import com.master.healthcoach.domain.SleepInterval
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -211,6 +214,21 @@ class HealthConnectGateway(private val context: Context) {
             val mainSleep = sleepRecords
                 .filter { it.endTime > dayStart && it.endTime <= dayEnd }
                 .maxByOrNull { Duration.between(it.startTime, it.endTime) }
+            val sleepDuration = mainSleep?.let { sleep ->
+                SleepDurationCalculator.calculate(
+                    sleep.startTime,
+                    sleep.endTime,
+                    sleep.stages.filter { stage ->
+                        stage.stage in setOf(
+                            SleepSessionRecord.STAGE_TYPE_SLEEPING,
+                            SleepSessionRecord.STAGE_TYPE_LIGHT,
+                            SleepSessionRecord.STAGE_TYPE_DEEP,
+                            SleepSessionRecord.STAGE_TYPE_REM,
+                        )
+                    }.map { SleepInterval(it.startTime, it.endTime) },
+                    hasKnownStages = sleep.stages.any { it.stage != SleepSessionRecord.STAGE_TYPE_UNKNOWN },
+                )
+            }
             val sleepHeartRateSamples = mainSleep?.let { sleep ->
                 heartRateRecords.flatMap { it.samples }.filter { sample ->
                     sample.time >= sleep.startTime && sample.time <= sleep.endTime
@@ -236,6 +254,14 @@ class HealthConnectGateway(private val context: Context) {
             val cardioMinutes = sessions
                 .filter { classifyExercise(it.exerciseType).contributesToCardioMinutes() }
                 .sumOf { Duration.between(it.startTime, it.endTime).toMinutes().coerceAtLeast(0) }
+            val cyclingMinutes = IntervalDuration.unionMinutes(
+                dayStart,
+                dayEnd,
+                exercises.filter { session ->
+                    session.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_BIKING ||
+                        session.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_BIKING_STATIONARY
+                }.map { SleepInterval(it.startTime, it.endTime) },
+            )
             val allMinutes = sessions.sumOf {
                 Duration.between(it.startTime, it.endTime).toMinutes().coerceAtLeast(0)
             }
@@ -274,10 +300,10 @@ class HealthConnectGateway(private val context: Context) {
                 morningRoutineMinutes = morningRoutineMinutes,
                 cardioMinutes = cardioMinutes,
                 exerciseSessionCount = sessions.size,
-                sleepMinutes = mainSleep?.let {
-                    Duration.between(it.startTime, it.endTime).toMinutes()
-                        .coerceAtLeast(0)
-                },
+                sleepMinutes = sleepDuration?.displayMinutes,
+                sleepSessionMinutes = sleepDuration?.sessionMinutes,
+                sleepDurationSource = sleepDuration?.source ?: "no_record",
+                cyclingMinutes = cyclingMinutes,
                 sleepStartEpochMillis = mainSleep?.startTime?.toEpochMilli(),
                 sleepEndEpochMillis = mainSleep?.endTime?.toEpochMilli(),
                 sleepHeartRateAverageBpm = sleepHeartRateSamples

@@ -76,6 +76,7 @@ object WeeklyReportBuilder {
         )
 
         val currentSleepValues = currentDaily.mapNotNull { it.sleepMinutes }
+        val currentSleepOpportunities = currentDaily.mapNotNull { it.sleepSessionMinutes ?: it.sleepMinutes }
         val currentSleepHeartRates = currentDaily.mapNotNull {
             it.sleepHeartRateAverageBpm
         }
@@ -163,6 +164,9 @@ object WeeklyReportBuilder {
             }
             if (currentDaily.count { it.steps != null } < 5) {
                 add("歩数データが5日未満です")
+            }
+            if (currentDaily.any { it.sleepMinutes != null && it.sleepDurationSource != "sleep_stages" }) {
+                add("睡眠ステージ欠測日はセッション枠で代用しています。推定睡眠時間と同一ではありません")
             }
             if (currentSleepValues.size < 5) {
                 add("主睡眠データが5日未満です")
@@ -263,7 +267,7 @@ object WeeklyReportBuilder {
             stepsBaselinePercent = stepsBaselinePercent,
             moderateEquivalentMinutes = currentMvpaEquivalent,
             previousWeekModerateEquivalentMinutes = previousMvpaEquivalent,
-            sleepTargetHitDays = currentSleepValues.count {
+            sleepTargetHitDays = currentSleepOpportunities.count {
                 it >= SLEEP_TARGET_MINUTES
             }.takeIf { currentSleepValues.isNotEmpty() },
             sleepScheduleDeviationMinutes = sleepScheduleDeviation,

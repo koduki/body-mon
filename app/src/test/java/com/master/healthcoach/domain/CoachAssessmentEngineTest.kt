@@ -237,7 +237,7 @@ class CoachAssessmentEngineTest {
             ),
         )
         val signal = lowSleep.signals.first { it.code == "SLEEP_OPPORTUNITY_LOW" }
-        assertTrue(signal.evidence.contains("6時間以上の主睡眠"))
+        assertTrue(signal.evidence.contains("6時間以上の睡眠記録枠"))
         assertTrue(signal.action!!.contains("6時間の睡眠機会"))
     }
 

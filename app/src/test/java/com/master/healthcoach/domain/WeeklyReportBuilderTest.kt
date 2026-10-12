@@ -209,6 +209,18 @@ class WeeklyReportBuilderTest {
         assertEquals(5, report.sleepTargetHitDays)
     }
 
+    @Test
+    fun `minimum sleep opportunity uses session while sleep duration uses stages`() {
+        val today = LocalDate.of(2026, 7, 30)
+        val daily = (0..6).map { offset ->
+            daily(today.minusDays(offset.toLong()), sleepMinutes = 330)
+                .copy(sleepSessionMinutes = 390, sleepDurationSource = "sleep_stages")
+        }
+        val report = WeeklyReportBuilder.build(today, daily, emptyList(), zoneId = zoneId)
+        assertEquals(7, report.sleepTargetHitDays)
+        assertEquals(330L, report.sleepDailyAverageMinutes)
+    }
+
     private fun daily(
         date: LocalDate,
         steps: Long = 8_000,

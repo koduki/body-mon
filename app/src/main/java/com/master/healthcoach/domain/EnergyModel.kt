@@ -23,21 +23,17 @@ data class ActiveEnergyEstimate(
         kotlin.math.abs(discrepancyKcal) >= EnergyModel.LARGE_DISCREPANCY_THRESHOLD_KCAL
 
     /**
-     * Step model is the baseline; on days with a large discrepancy from the device
-     * metric, 50% of the difference is added as a reference value.
+     * Continuous midpoint scenario, not a Xiaomi calibration factor.
+     * Diagnostic flags must never change this value at a threshold.
      */
     val discrepancyReferenceAddKcal: Double =
-        if (isLargeDiscrepancy) {
-            discrepancyKcal * EnergyModel.DISCREPANCY_REFERENCE_FACTOR
-        } else {
-            0.0
-        }
+        discrepancyKcal * EnergyModel.DISCREPANCY_REFERENCE_FACTOR
 
     val evaluatedKcal: Double = stepModelKcal + discrepancyReferenceAddKcal
 
     val range: EnergyRange = EnergyRange(
-        lowKcal = min(stepModelKcal, evaluatedKcal),
-        highKcal = max(stepModelKcal, evaluatedKcal),
+        lowKcal = min(stepModelKcal, deviceKcal),
+        highKcal = max(stepModelKcal, deviceKcal),
     )
 }
 
@@ -59,15 +55,15 @@ data class EnergyBalanceSummary(
 /**
  * Reference estimate of active energy expenditure from steps and workout sessions.
  *
- * Step/workout-based active expenditure is used as the baseline. On days where the
- * device metric diverges largely from the step-based estimate, 50% of the difference is
- * added as a reference value for evaluation.
+ * Xiaomi also estimates non-step activity. Neither estimate has a universal bias.
+ * Keep both endpoints; their continuous midpoint is a sensitivity scenario only.
+ * The discrepancy threshold flags diagnostics and never switches the calculation.
  *
  * Constants are fixed and versioned on purpose: tuning them to hit a desired number
  * would make the metric meaningless.
  */
 object EnergyModel {
-    const val VERSION = "2026-10-step-v2"
+    const val VERSION = "2026-10-step-v3-xiaomi"
 
     /** Net (above-rest) cost of level walking, kcal per kg per km. */
     const val WALKING_NET_KCAL_PER_KG_KM = 0.5
@@ -75,6 +71,9 @@ object EnergyModel {
     /** Net MET = Compendium gross MET - 1. 1 MET is treated as 1 kcal/kg/h. */
     const val MORNING_ROUTINE_NET_MET = 3.0
     const val STRENGTH_NET_MET = 2.5
+    // Compendium 01010: leisure cycling gross 4 MET minus resting 1 MET.
+    // A fixed reference scenario; speed, gradient and electric assistance are unknown.
+    const val CYCLING_NET_MET = 3.0
 
     const val STRIDE_RATIO_FEMALE = 0.413
     const val STRIDE_RATIO_MALE = 0.415
@@ -87,7 +86,7 @@ object EnergyModel {
     /** Threshold for treating the gap between step-based and device active kcal as large. */
     const val LARGE_DISCREPANCY_THRESHOLD_KCAL = 100.0
 
-    /** Portion of (device - stepModel) added as a reference value on large-discrepancy days. */
+    /** Portion of (device - stepModel) used for the continuous midpoint scenario. */
     const val DISCREPANCY_REFERENCE_FACTOR = 0.5
 
     const val WEIGHT_WINDOW_DAYS = 7L
@@ -96,9 +95,11 @@ object EnergyModel {
     const val DISPLAY_ROUNDING_KCAL = 10.0
 
     const val INTERPRETATION =
-        "活動消費は歩数と運動時間からの換算値を基本とし、メトリクス（バンド値）との乖離が大きい日" +
-            "（差100kcal以上）は差分の50%を参考値として加えて評価します。" +
-            "体重の28日傾向を優先してください。診断や摂取量の指示には使いません。"
+        "Xiaomi Bandは心拍・手首の動き・プロフィールから推定し、歩数のない日常活動も含みます。" +
+            "歩数・記録運動モデルとデバイス値の小さい方〜大きい方を比較レンジとして残します。" +
+            "中点は差の50%を常時反映した感度分析の参考値で、校正済み消費量でも信頼区間でもありません。" +
+            "自転車は記録時間から軽い走行相当で換算。登山の勾配・水泳・未記録運動は換算に反映できません。" +
+            "体重の期間別傾向を優先し、摂取量や赤字量の指示には使いません。"
 
     /**
      * Weight as known on [date]: median of the 7 days up to [date], otherwise the most
@@ -137,8 +138,9 @@ object EnergyModel {
      * Step/workout based active energy for one day, or null when an input is missing.
      * Zero steps is a real zero; a null step count is missing.
      *
-     * Walking/running/cycling sessions are not added: walking is already in steps, and
-     * other cardio cannot be separated from steps reliably in v1.
+     * Walking/running remain in steps. Cycling is separate and added once.
+     * On cycling days distance may include cycling, so walking uses stride estimation.
+     * Unrecorded cycling and hill effort cannot be recovered from daily steps.
      */
     fun stepModelActiveKcal(
         day: DailyHealthSummaryEntity,
@@ -146,18 +148,19 @@ object EnergyModel {
         heightCm: Double?,
         sex: String?,
     ): Double? {
-        val weight = weightKg?.takeIf { it > 0 } ?: return null
+        val weight = weightKg?.takeIf { it.isFinite() && it > 0 } ?: return null
         val steps = day.steps ?: return null
         val walkingKm = when {
             steps <= 0L -> 0.0
-            else -> usableDistanceKm(day.distanceMeters, steps)
+            else -> (if (day.cyclingMinutes == 0L) usableDistanceKm(day.distanceMeters, steps) else null)
                 ?: estimatedDistanceKm(steps, heightCm, sex)
                 ?: return null
         }
         val walking = walkingKm * weight * WALKING_NET_KCAL_PER_KG_KM
         val sessions = (
             day.morningRoutineMinutes.coerceAtLeast(0) * MORNING_ROUTINE_NET_MET +
-                day.strengthMinutes.coerceAtLeast(0) * STRENGTH_NET_MET
+                day.strengthMinutes.coerceAtLeast(0) * STRENGTH_NET_MET +
+                day.cyclingMinutes.coerceAtLeast(0) * CYCLING_NET_MET
             ) * weight / 60.0
         return walking + sessions
     }
@@ -185,7 +188,7 @@ object EnergyModel {
         sex: String?,
     ): ActiveEnergyEstimate? {
         val date = runCatching { LocalDate.parse(day.date) }.getOrNull() ?: return null
-        val device = day.activeCaloriesKcal ?: return null
+        val device = day.activeCaloriesKcal?.takeIf { it.isFinite() && it >= 0 } ?: return null
         val model = stepModelActiveKcal(day, weightKgOn(date, body), heightCm, sex)
             ?: return null
         return ActiveEnergyEstimate(stepModelKcal = model, deviceKcal = device)

@@ -487,16 +487,14 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 MetricCard(
                     "参考活動消費",
                     todayActive?.range?.let { it.activeRangeLabel() } ?: "未取得",
-                    "歩数ベース（大乖離日は差の50%加算）",
+                    "歩数・記録運動とデバイスの比較",
                     Modifier.weight(1f),
                 )
             }
         }
         item {
             Text(
-                "活動消費は歩数と運動時間からの換算値を基本とし、メトリクス（バンド値）との乖離が大きい日" +
-                    "（差100kcal以上）は差分の50%を参考値として加えて評価します。" +
-                    "体重の28日傾向を優先して見てください。診断や摂取量の目安ではありません。",
+                EnergyModel.INTERPRETATION,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -529,7 +527,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                         ?: todayDaily?.estimatedEnergyBalanceKcal?.let { signed(it) + " kcal" }
                         ?: "未取得",
                     if (todayBalance != null) {
-                        "歩数ベース〜参考評価値"
+                        "モデル・デバイス比較レンジ"
                     } else {
                         "バンド値のみ・参考"
                     },
@@ -575,7 +573,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
-                    "主睡眠",
+                    if (todayDaily?.sleepDurationSource == "sleep_stages") "推定睡眠時間" else "睡眠記録枠（代用）",
                     todayDaily?.sleepMinutes?.asHoursMinutes() ?: "未取得",
                     listOfNotNull(
                         todayDaily?.sleepStartEpochMillis?.let { formatClock(it) },
@@ -1435,7 +1433,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
-                                title = "平均睡眠",
+                                title = "睡眠時間・代用値",
                                 mainValue = report.sleepDailyAverageMinutes?.asHoursMinutes() ?: "未取得",
                                 subValue = compareDiff(report.sleepDailyAverageMinutes, report.previousWeekSleepDailyAverageMinutes)?.let {
                                     "前週比 ${signed(it.toDouble())}分"
@@ -1455,9 +1453,9 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             ReportTile(
                                 title = "6時間以上",
-                                mainValue = report.sleepTargetHitDays?.let { "$it / 7日" }
+                                mainValue = report.sleepTargetHitDays?.let { "$it / ${report.sleepMeasurementDays}測定日" }
                                     ?: "未取得",
-                                subValue = "主睡眠の達成日",
+                                subValue = "本人の最低目標・回復十分の判定ではない",
                                 modifier = Modifier.weight(1f),
                             )
                             ReportTile(
@@ -1591,12 +1589,12 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             )
                         }
                         val balanceText = if (report.referenceEnergyBalanceLowKcal != null && report.referenceEnergyBalanceHighKcal != null) {
-                            EnergyRange(report.referenceEnergyBalanceLowKcal, report.referenceEnergyBalanceHighKcal).balanceRangeLabel() + "/日（歩数ベース〜参考評価値）"
+                            EnergyRange(report.referenceEnergyBalanceLowKcal, report.referenceEnergyBalanceHighKcal).balanceRangeLabel() + "/日（モデル・デバイス比較レンジ）"
                         } else {
                             report.estimatedEnergyBalanceDailyAverage?.let { "${signed(it)} kcal/日（バンド値）" } ?: "未取得"
                         }
                         Text(
-                            "推定収支 $balanceText。摂取−(基礎代謝+活動消費)で、歩数換算を基本とし乖離が大きい日は差の50%を加えた参考レンジです。" +
+                            "推定収支 $balanceText。摂取−(基礎代謝+活動消費)で、モデルとデバイス推定の比較レンジです。" +
                                 "あすけんが書き出すのは摂取カロリーとPFCのみです。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1617,7 +1615,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                     ) {
                         Text("参考値の内訳", fontWeight = FontWeight.SemiBold)
                         val activeText = if (report.referenceActiveRangeLowKcal != null && report.referenceActiveRangeHighKcal != null) {
-                            EnergyRange(report.referenceActiveRangeLowKcal, report.referenceActiveRangeHighKcal).activeRangeLabel() + "/日（歩数ベース〜参考評価値）"
+                            EnergyRange(report.referenceActiveRangeLowKcal, report.referenceActiveRangeHighKcal).activeRangeLabel() + "/日（モデル・デバイス比較レンジ）"
                         } else {
                             report.activeCaloriesDailyAverage.kcal("/日")
                         }
@@ -1628,7 +1626,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                         )
                         Text(
                             "上の「カロリー収支と体重の対照」で摂取との差を見ます。" +
-                                "活動消費は歩数ベースを基本とし、メトリクスとの乖離が大きい日は差分の50%を参考値として加えて評価します。",
+                                "Xiaomiは歩数のない活動も推定します。モデルとデバイスの差を比較し、真値や信頼区間とは扱いません。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

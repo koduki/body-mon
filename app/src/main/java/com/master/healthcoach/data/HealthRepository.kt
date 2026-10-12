@@ -54,7 +54,8 @@ class HealthRepository(
         }
         val canBackfillHistory = gateway.hasHistoryPermission()
         val needsInitialBackfill = canBackfillHistory && (
-            earliestDaily == null || earliestDaily > today.minusDays(89)
+            earliestDaily == null || earliestDaily > today.minusDays(89) ||
+                dao.needsMetricBackfill(today.minusDays(89).toString())
             )
         val bundle = gateway.sync(days = if (needsInitialBackfill) 90 else 28)
         database.withTransaction {
