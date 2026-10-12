@@ -221,6 +221,19 @@ class WeeklyReportBuilderTest {
         assertEquals(330L, report.sleepDailyAverageMinutes)
     }
 
+    @Test
+    fun `legacy and partial sleep data retain their different limitations`() {
+        val today = LocalDate.of(2026, 7, 30)
+        val daily = (0..6).map { offset ->
+            daily(today.minusDays(offset.toLong())).copy(
+                sleepDurationSource = if (offset == 0) "legacy_session" else "sleep_stages_partial",
+            )
+        }
+        val report = WeeklyReportBuilder.build(today, daily, emptyList(), zoneId = zoneId)
+        assertTrue(report.dataLimitations.any { it.contains("セッション枠で代用") })
+        assertTrue(report.dataLimitations.any { it.contains("既知の睡眠区間合計") })
+    }
+
     private fun daily(
         date: LocalDate,
         steps: Long = 8_000,
@@ -243,6 +256,8 @@ class WeeklyReportBuilderTest {
         cardioMinutes = morningRoutineMinutes,
         exerciseSessionCount = if (strengthMinutes + morningRoutineMinutes > 0) 1 else 0,
         sleepMinutes = sleepMinutes,
+        sleepSessionMinutes = sleepMinutes,
+        sleepDurationSource = "sleep_stages",
         sleepStartEpochMillis = date.minusDays(1).atTime(23, 0)
             .atZone(zoneId).toInstant().toEpochMilli(),
         sleepEndEpochMillis = date.atTime(6, 30)
