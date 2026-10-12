@@ -20,12 +20,14 @@ import com.master.healthcoach.data.security.SecureApiKeyStore
 import com.master.healthcoach.domain.AdviceResponse
 import com.master.healthcoach.domain.WeeklySnapshot
 import java.time.LocalDate
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 
 data class MainUiState(
@@ -44,6 +46,7 @@ data class MainUiState(
     val corePermissions: Set<String> = emptySet(),
     val isSyncing: Boolean = false,
     val isSending: Boolean = false,
+    val isExporting: Boolean = false,
     val apiKeyConfigured: Boolean = false,
     val modelId: String = SecureApiKeyStore.DEFAULT_MODEL,
     val weeklyAdvice: AdviceResponse? = null,
@@ -235,6 +238,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .onSuccess { advice -> update { it.copy(weeklyAdvice = advice) } }
                 .onFailure { error -> update { it.copy(message = error.userMessage()) } }
             update { it.copy(isSending = false) }
+        }
+    }
+
+    fun exportDataToUri(uri: Uri) {
+        if (transient.value.isExporting) return
+        viewModelScope.launch {
+            update { it.copy(isExporting = true, message = null) }
+            runCatching {
+                val jsonText = repository.exportTwentyEightDaysJson()
+                withContext(Dispatchers.IO) {
+                    val stream = getApplication<Application>().contentResolver
+                        .openOutputStream(uri, "wt")
+                        ?: error("保存先のファイルを開けませんでした")
+                    stream.bufferedWriter(Charsets.UTF_8).use { writer ->
+                        writer.write(jsonText)
+                    }
+                }
+            }.onSuccess {
+                update {
+                    it.copy(message = "28日間の実測データと会話履歴をJSONでエクスポートしました")
+                }
+            }.onFailure { error ->
+                update { it.copy(message = error.userMessage()) }
+            }
+            update { it.copy(isExporting = false) }
         }
     }
 

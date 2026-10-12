@@ -95,6 +95,12 @@ interface HealthCoachDao {
     @Query("SELECT * FROM chat_messages ORDER BY id DESC LIMIT :limit")
     suspend fun getRecentMessages(limit: Int): List<ChatMessageEntity>
 
+    @Query("SELECT * FROM chat_messages ORDER BY id")
+    suspend fun getAllMessages(): List<ChatMessageEntity>
+
+    @Query("SELECT * FROM chat_messages WHERE createdAtEpochMillis BETWEEN :from AND :to ORDER BY id")
+    suspend fun getMessagesInRange(from: Long, to: Long): List<ChatMessageEntity>
+
     @Query("SELECT id FROM chat_messages ORDER BY id")
     suspend fun getMessageIds(): List<Long>
 
