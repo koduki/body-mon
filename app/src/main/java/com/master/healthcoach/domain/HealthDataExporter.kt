@@ -1,5 +1,6 @@
 package com.master.healthcoach.domain
 
+import com.master.healthcoach.BuildConfig
 import com.master.healthcoach.data.db.BodyCompositionEntity
 import com.master.healthcoach.data.db.ChatMessageEntity
 import com.master.healthcoach.data.db.ConversationMemoryEntity
@@ -19,6 +20,8 @@ import kotlinx.serialization.json.Json
 @Serializable
 data class HealthDataExportPayload(
     val schemaVersion: Int = 1,
+    val appVersionName: String = BuildConfig.VERSION_NAME,
+    val appVersionCode: Int = BuildConfig.VERSION_CODE,
     val exportedAtIso: String,
     val exportedAtEpochMillis: Long,
     val timeZone: String,
@@ -73,6 +76,11 @@ object HealthDataExporter {
         explicitNulls = false
         ignoreUnknownKeys = true
     }
+
+    fun formatAppVersionLabel(
+        versionName: String = BuildConfig.VERSION_NAME,
+        versionCode: Int = BuildConfig.VERSION_CODE,
+    ): String = "v$versionName ($versionCode)"
 
     fun defaultFileName(today: LocalDate = LocalDate.now()): String =
         "health-coach-export-$today.json"

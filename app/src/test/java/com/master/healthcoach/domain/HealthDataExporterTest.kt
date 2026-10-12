@@ -244,6 +244,8 @@ class HealthDataExporterTest {
         assertEquals("2026-09-16", payload.periodStart)
         assertEquals("2026-10-13", payload.periodEnd)
         assertEquals(28, payload.daysIncluded)
+        assertTrue(payload.appVersionName.isNotBlank())
+        assertTrue(payload.appVersionCode >= 1)
         assertEquals(2, payload.measuredData.dailySummaries.size)
         assertEquals(1, payload.measuredData.bodyCompositions.size)
         assertEquals(1, payload.measuredData.exerciseSessions.size)
@@ -268,10 +270,15 @@ class HealthDataExporterTest {
     }
 
     @Test
-    fun `generates expected default file name`() {
+    fun `generates expected default file name and version label`() {
         assertEquals(
             "health-coach-export-2026-10-13.json",
             HealthDataExporter.defaultFileName(LocalDate.of(2026, 10, 13)),
         )
+        assertEquals(
+            "v0.1.1015 (1015)",
+            HealthDataExporter.formatAppVersionLabel("0.1.1015", 1015),
+        )
     }
 }
+
