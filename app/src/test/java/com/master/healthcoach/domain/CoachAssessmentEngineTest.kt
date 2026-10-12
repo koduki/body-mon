@@ -223,6 +223,24 @@ class CoachAssessmentEngineTest {
         assertTrue(assessment.nextActions.none { it.contains("赤字") })
     }
 
+    @Test
+    fun `uses 6 hour baseline for sleep recovery signals`() {
+        val lowSleep = CoachAssessmentEngine.assess(
+            snapshot(
+                weightLossRate = 0.5,
+                fatTrend = -0.3,
+                leanTrend = 0.0,
+                routineDays = 6,
+                routineAdherence = 86,
+                stepsBaseline = 100,
+                sleepTargetDays = 2,
+            ),
+        )
+        val signal = lowSleep.signals.first { it.code == "SLEEP_OPPORTUNITY_LOW" }
+        assertTrue(signal.evidence.contains("6時間以上の主睡眠"))
+        assertTrue(signal.action!!.contains("6時間の睡眠機会"))
+    }
+
     private fun snapshot(
         weightLossRate: Double?,
         fatTrend: Double?,

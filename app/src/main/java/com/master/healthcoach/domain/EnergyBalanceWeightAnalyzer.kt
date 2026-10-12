@@ -18,8 +18,11 @@ object EnergyBalanceWeightAnalyzer {
     fun analyze(snapshot: WeeklySnapshot): EnergyBalanceWeightAnalysis {
         val intake = snapshot.intakeCaloriesDailyAverage
         val basal = snapshot.basalCaloriesDailyAverage
-        val active = snapshot.activeCaloriesDailyAverage
-        val balance = snapshot.estimatedEnergyBalanceDailyAverage
+        val active = snapshot.referenceActiveRangeHighKcal
+            ?: snapshot.referenceActiveStepModelDailyAverage
+            ?: snapshot.activeCaloriesDailyAverage
+        val balance = snapshot.referenceEnergyBalanceLowKcal
+            ?: snapshot.estimatedEnergyBalanceDailyAverage
         val expenditure = if (basal != null && active != null) basal + active else null
         val observedTrend = snapshot.weightTrendKgPerWeek
             ?: snapshot.weightChangeKg

@@ -119,7 +119,7 @@ class GeminiClient(
             食事、睡眠、運動、仕事、生活リズム、好み、制約、目標、継続中の方針を優先します。
             利用者の訂正や新しい発言は古い記述より優先してください。
             アシスタントの提案や推測を利用者の習慣として記録してはいけません。
-            一時的な健康数値、根拠のない因果関係、センシティブな推測を追加しないでください。
+            一時的な健康数値、「今日」「昨日」などの単日の出来事（その日食べたものや単日の体調・予定）、根拠のない因果関係、センシティブな推測を追加しないでください。
             日本語の短い箇条書きで800文字以内にしてください。
 
             既存メモリー:
@@ -219,11 +219,16 @@ class GeminiClient(
     private fun healthTools() = buildJsonArray {
         add(buildJsonObject {
             put("functionDeclarations", buildJsonArray {
-                add(function("get_body_composition", "指定期間の体重、脂肪量、除脂肪量を取得します"))
+                add(
+                    function(
+                        "get_body_composition",
+                        "指定期間の体重、脂肪量、除脂肪量、および直近7日中央値・28日トレンド（週あたり増減ペース）を取得します",
+                    ),
+                )
                 add(
                     function(
                         "get_activity_summary",
-                        "指定期間の歩数、距離、活動消費（バンド値）と、歩数・運動時間から換算した参考活動消費のレンジを取得します",
+                        "指定期間の歩数、距離、活動消費（メトリクス値）、歩数・運動時間ベースの活動消費、および乖離が大きい日の差分50%を加えた参考評価値を取得します",
                     ),
                 )
                 add(
@@ -232,7 +237,12 @@ class GeminiClient(
                         "指定期間の運動回数、運動時間、朝の5分ルーティンを取得します",
                     ),
                 )
-                add(function("get_sleep_summary", "指定期間の睡眠時間を取得します"))
+                add(
+                    function(
+                        "get_sleep_summary",
+                        "指定期間の睡眠時間、6時間ベースライン達成日数、睡眠中心拍を取得します",
+                    ),
+                )
                 add(function("get_heart_rate_summary", "指定期間の心拍数を取得します"))
                 add(function("get_activity_intensity_summary", "指定期間の中強度・高強度活動時間を取得します"))
                 add(function("get_metabolism_summary", "指定期間の基礎代謝を取得します"))

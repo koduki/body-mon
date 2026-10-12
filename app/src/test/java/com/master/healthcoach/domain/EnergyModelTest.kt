@@ -136,7 +136,7 @@ class EnergyModelTest {
     }
 
     @Test
-    fun `summarizeActive requires at least 4 valid days`() {
+    fun `summarizeActive requires at least 4 valid days and adds 50 percent of large discrepancy`() {
         val days3 = (1..3).map {
             testDay(
                 date = "2026-10-0$it",
@@ -154,38 +154,60 @@ class EnergyModelTest {
                 date = "2026-10-0$it",
                 steps = 8_000,
                 distanceMeters = 5_600.0, // model = 196 kcal
-                activeCaloriesKcal = 400.0,
+                activeCaloriesKcal = 400.0, // discrepancy = +204 kcal (>= 100) -> +50% = +102 -> evaluated = 298 kcal
             )
         }
         val summary = EnergyModel.summarizeActive(days4, body, 175.0, "male")
         assertNotNull(summary)
         assertEquals(4, summary!!.validDays)
-        // 196 rounded to nearest 10 is 200.0
+        assertEquals(4, summary.largeDiscrepancyDays)
+        // 196 rounded to nearest 10 is 200.0; 298 rounded to nearest 10 is 300.0
         assertEquals(200.0, summary.stepModelDailyAverageKcal, 0.001)
         assertEquals(400.0, summary.deviceDailyAverageKcal, 0.001)
+        assertEquals(300.0, summary.evaluatedDailyAverageKcal, 0.001)
         assertEquals(200.0, summary.range.lowKcal, 0.001)
-        assertEquals(400.0, summary.range.highKcal, 0.001)
+        assertEquals(300.0, summary.range.highKcal, 0.001)
     }
 
     @Test
-    fun `energy balance range is calculated from intake, basal, and active range`() {
+    fun `keeps step baseline without adjustment when discrepancy is below threshold`() {
+        val daySmallGap = testDay(
+            date = "2026-10-01",
+            steps = 8_000,
+            distanceMeters = 5_600.0, // model = 196 kcal
+            activeCaloriesKcal = 250.0, // discrepancy = +54 kcal (< 100)
+        )
+        val body = listOf(testBody("2026-10-01", weight = 70.0))
+        val estimate = EnergyModel.dailyActive(daySmallGap, body, 175.0, "male")
+        assertNotNull(estimate)
+        assertEquals(false, estimate!!.isLargeDiscrepancy)
+        assertEquals(0.0, estimate.discrepancyReferenceAddKcal, 0.001)
+        assertEquals(196.0, estimate.evaluatedKcal, 0.001)
+        assertEquals(196.0, estimate.range.lowKcal, 0.001)
+        assertEquals(196.0, estimate.range.highKcal, 0.001)
+    }
+
+    @Test
+    fun `energy balance range is calculated from intake, basal, and step plus 50 percent large discrepancy range`() {
         val day = testDay(
             date = "2026-10-01",
             steps = 8_000,
             distanceMeters = 5_600.0, // model active = 196 kcal
-            activeCaloriesKcal = 450.0, // device active = 450 kcal
+            activeCaloriesKcal = 450.0, // device active = 450 kcal -> gap = 254 -> +50% = +127 -> evaluated = 323 kcal
             basalCaloriesKcal = 1_500.0,
             intakeCaloriesKcal = 1_800.0,
         )
         val body = listOf(testBody("2026-10-01", weight = 70.0))
         val activeEstimate = EnergyModel.dailyActive(day, body, 175.0, "male")
         assertNotNull(activeEstimate)
+        assertTrue(activeEstimate!!.isLargeDiscrepancy)
+        assertEquals(323.0, activeEstimate.evaluatedKcal, 0.001)
 
         val balanceRange = EnergyModel.dailyBalance(day, activeEstimate)
         assertNotNull(balanceRange)
-        // intake (1800) - basal (1500) - highActive (450) = -150
+        // intake (1800) - basal (1500) - highActive (323) = -23
         // intake (1800) - basal (1500) - lowActive (196) = +104
-        assertEquals(-150.0, balanceRange!!.lowKcal, 0.001)
+        assertEquals(-23.0, balanceRange!!.lowKcal, 0.001)
         assertEquals(104.0, balanceRange.highKcal, 0.001)
     }
 
