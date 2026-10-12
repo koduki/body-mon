@@ -18,6 +18,9 @@ data class DailyHealthSummaryEntity(
     val cardioMinutes: Long,
     val exerciseSessionCount: Int,
     val sleepMinutes: Long?,
+    val sleepSessionMinutes: Long? = null,
+    @ColumnInfo(defaultValue = "'legacy_session'") val sleepDurationSource: String = "legacy_session",
+    @ColumnInfo(defaultValue = "0") val cyclingMinutes: Long = 0,
     val sleepStartEpochMillis: Long? = null,
     val sleepEndEpochMillis: Long? = null,
     val sleepHeartRateAverageBpm: Long? = null,
@@ -141,4 +144,3 @@ data class ConversationMemoryEntity(
     val summarizedThroughMessageId: Long,
     val updatedAtEpochMillis: Long,
 )
-

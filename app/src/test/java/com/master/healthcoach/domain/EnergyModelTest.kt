@@ -136,7 +136,7 @@ class EnergyModelTest {
     }
 
     @Test
-    fun `summarizeActive requires at least 4 valid days and adds 50 percent of large discrepancy`() {
+    fun `summarizeActive requires at least 4 valid days and preserves both estimates with a continuous midpoint`() {
         val days3 = (1..3).map {
             testDay(
                 date = "2026-10-0$it",
@@ -154,7 +154,7 @@ class EnergyModelTest {
                 date = "2026-10-0$it",
                 steps = 8_000,
                 distanceMeters = 5_600.0, // model = 196 kcal
-                activeCaloriesKcal = 400.0, // discrepancy = +204 kcal (>= 100) -> +50% = +102 -> evaluated = 298 kcal
+                activeCaloriesKcal = 400.0, // continuous midpoint = 298 kcal; full comparison includes 400 kcal
             )
         }
         val summary = EnergyModel.summarizeActive(days4, body, 175.0, "male")
@@ -166,11 +166,11 @@ class EnergyModelTest {
         assertEquals(400.0, summary.deviceDailyAverageKcal, 0.001)
         assertEquals(300.0, summary.evaluatedDailyAverageKcal, 0.001)
         assertEquals(200.0, summary.range.lowKcal, 0.001)
-        assertEquals(300.0, summary.range.highKcal, 0.001)
+        assertEquals(400.0, summary.range.highKcal, 0.001)
     }
 
     @Test
-    fun `keeps step baseline without adjustment when discrepancy is below threshold`() {
+    fun `calculates a midpoint even below diagnostic threshold`() {
         val daySmallGap = testDay(
             date = "2026-10-01",
             steps = 8_000,
@@ -181,14 +181,14 @@ class EnergyModelTest {
         val estimate = EnergyModel.dailyActive(daySmallGap, body, 175.0, "male")
         assertNotNull(estimate)
         assertEquals(false, estimate!!.isLargeDiscrepancy)
-        assertEquals(0.0, estimate.discrepancyReferenceAddKcal, 0.001)
-        assertEquals(196.0, estimate.evaluatedKcal, 0.001)
+        assertEquals(27.0, estimate.discrepancyReferenceAddKcal, 0.001)
+        assertEquals(223.0, estimate.evaluatedKcal, 0.001)
         assertEquals(196.0, estimate.range.lowKcal, 0.001)
-        assertEquals(196.0, estimate.range.highKcal, 0.001)
+        assertEquals(250.0, estimate.range.highKcal, 0.001)
     }
 
     @Test
-    fun `energy balance range is calculated from intake, basal, and step plus 50 percent large discrepancy range`() {
+    fun `energy balance range is calculated from intake, basal, and full comparison range`() {
         val day = testDay(
             date = "2026-10-01",
             steps = 8_000,
@@ -205,9 +205,9 @@ class EnergyModelTest {
 
         val balanceRange = EnergyModel.dailyBalance(day, activeEstimate)
         assertNotNull(balanceRange)
-        // intake (1800) - basal (1500) - highActive (323) = -23
+        // intake (1800) - basal (1500) - highActive (450) = -150
         // intake (1800) - basal (1500) - lowActive (196) = +104
-        assertEquals(-23.0, balanceRange!!.lowKcal, 0.001)
+        assertEquals(-150.0, balanceRange!!.lowKcal, 0.001)
         assertEquals(104.0, balanceRange.highKcal, 0.001)
     }
 
@@ -258,6 +258,34 @@ class EnergyModelTest {
         assertEquals(1_950.0, check.deviceTdeeKcal!!, 0.001) // 1500 + 450
         assertEquals(1_700.0, check.stepModelTdeeKcal!!, 0.001) // 1500 + 200
         assertEquals(24, check.intakeDays)
+    }
+
+    @Test
+    fun `diagnostic threshold does not introduce discontinuity and supports lower band values`() {
+        val before = ActiveEnergyEstimate(200.0, 299.0)
+        val after = ActiveEnergyEstimate(200.0, 300.0)
+        assertEquals(0.5, after.evaluatedKcal - before.evaluatedKcal, 0.001)
+        val lower = ActiveEnergyEstimate(400.0, 100.0)
+        assertEquals(250.0, lower.evaluatedKcal, 0.001)
+        assertEquals(100.0, lower.range.lowKcal, 0.001)
+        assertEquals(400.0, lower.range.highKcal, 0.001)
+    }
+
+    @Test
+    fun `cycling is added once and cycling distance is not interpreted as walking`() {
+        val cyclingDay = testDay("2026-10-01", steps = 8000, distanceMeters = 8000.0)
+            .copy(cyclingMinutes = 30)
+        // Walking uses stride (5.81 km), not mixed daily distance (8 km).
+        assertEquals(308.35, EnergyModel.stepModelActiveKcal(cyclingDay, 70.0, 175.0, "male")!!, 0.001)
+        assertEquals(105.0, EnergyModel.stepModelActiveKcal(cyclingDay.copy(steps = 0), 70.0, 175.0, "male")!!, 0.001)
+    }
+
+    @Test
+    fun `invalid device energy is missing rather than part of a range`() {
+        val body = listOf(testBody("2026-10-01", 70.0))
+        for (value in listOf(-1.0, Double.NaN, Double.POSITIVE_INFINITY)) {
+            assertNull(EnergyModel.dailyActive(testDay("2026-10-01", activeCaloriesKcal = value), body, 175.0, "male"))
+        }
     }
 
     private fun testDay(

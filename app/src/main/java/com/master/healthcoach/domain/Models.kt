@@ -79,7 +79,7 @@ data class WeeklySnapshot(
     val fatEnergyPercent: Double? = null,
     val carbohydrateEnergyPercent: Double? = null,
     val mealCountDailyAverage: Double? = null,
-    /** Step/workout based reference (EnergyModel). Lower-leaning; device value is upper-leaning. */
+    /** Comparison of recorded step/workout model and device estimates; neither is the true bound. */
     val referenceActiveStepModelDailyAverage: Double? = null,
     val referenceActiveRangeLowKcal: Double? = null,
     val referenceActiveRangeHighKcal: Double? = null,

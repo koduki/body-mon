@@ -59,7 +59,8 @@ class HealthRepository(
         }
         val canBackfillHistory = gateway.hasHistoryPermission()
         val needsInitialBackfill = canBackfillHistory && (
-            earliestDaily == null || earliestDaily > today.minusDays(89)
+            earliestDaily == null || earliestDaily > today.minusDays(89) ||
+                dao.needsMetricBackfill(today.minusDays(89).toString())
             )
         val bundle = gateway.sync(days = if (needsInitialBackfill) 90 else 28)
         database.withTransaction {
@@ -187,7 +188,8 @@ class HealthRepository(
         val today = exportedAt.toLocalDate()
         val (from, to) = HealthDataExporter.dateRange(today)
         val (startMillis, endMillis) = HealthDataExporter.epochRange(from, to, zoneId)
-        val weeklyEntity = dao.getLatestWeekly() ?: rebuildWeekly(today)
+        // Export current definitions and the requested day's report, never a stale cache.
+        val weeklyEntity = rebuildWeekly(today)
         val weeklySnapshot = runCatching {
             json.decodeFromString<WeeklySnapshot>(weeklyEntity.snapshotJson)
         }.getOrNull()

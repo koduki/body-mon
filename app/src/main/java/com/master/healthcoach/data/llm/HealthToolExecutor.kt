@@ -3,7 +3,6 @@ package com.master.healthcoach.data.llm
 import com.master.healthcoach.data.HealthRepository
 import com.master.healthcoach.domain.EnergyModel
 import com.master.healthcoach.domain.NutritionMacros
-import com.master.healthcoach.domain.WeeklyReportBuilder
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -79,26 +78,14 @@ class HealthToolExecutor(
 
     private suspend fun body(call: GeminiFunctionCall): JsonElement {
         val (from, to) = range(call)
-        val today = todayProvider()
         val items = repository.getBody(from, to)
-        val trendWindowBody = repository.getBody(today.minusDays(27), today)
-        val snapshot = WeeklyReportBuilder.build(
-            today = today,
-            daily = emptyList(),
-            body = trendWindowBody,
-            zoneId = zoneIdProvider(),
-        )
+        val trendWindowBody = repository.getBody(to.minusDays(27), to)
+        val trendSummary = bodyTrendSummary(to, trendWindowBody, zoneIdProvider())
         val measuredDates = items.filter { it.weightKg != null }.map { it.date }.toSet()
         return buildJsonObject {
             putChronologyHeader(from, to, measuredDates)
-            put("measurementDays", items.size)
-            number("currentWeightMedianKg", snapshot.currentWeightMedianKg)
-            number("currentFatMassMedianKg", snapshot.currentFatMassMedianKg)
-            number("currentLeanMassMedianKg", snapshot.currentLeanMassMedianKg)
-            number("weightTrendKgPerWeek", snapshot.weightTrendKgPerWeek)
-            number("weightLossRatePercentPerWeek", snapshot.weightLossRatePercentPerWeek)
-            number("fatMassTrendKgPerWeek", snapshot.fatMassTrendKgPerWeek)
-            number("leanMassTrendKgPerWeek", snapshot.leanMassTrendKgPerWeek)
+            put("measurementDays", measuredDates.size)
+            trendSummary.forEach { (key, value) -> put(key, value) }
             put("records", buildJsonArray {
                 items.forEach { item ->
                     add(buildJsonObject {
@@ -136,12 +123,7 @@ class HealthToolExecutor(
             )
             put(
                 "referenceNote",
-                "活動消費は歩数・運動時間からの換算値（referenceStepModelActiveKcal）を基本とし、" +
-                    "メトリクス（バンド値 activeCaloriesKcal）との乖離が大きい日（差" +
-                    "${EnergyModel.LARGE_DISCREPANCY_THRESHOLD_KCAL.toInt()}kcal以上）は" +
-                    "差分の50%を参考値として加えて評価する（referenceEvaluatedActiveKcal / referenceActiveRangeHighKcal）。" +
-                    "摂取量や赤字量の指示には使わない。" +
-                    "modelVersion=${EnergyModel.VERSION}。${EnergyModel.INTERPRETATION}",
+                EnergyModel.INTERPRETATION + " modelVersion=${EnergyModel.VERSION}",
             )
             summary?.let {
                 number("referenceStepModelActiveKcalDailyAverage", it.stepModelDailyAverageKcal)
@@ -164,6 +146,7 @@ class HealthToolExecutor(
                         put("relativeDay", relativeDay(item.date))
                         item.steps?.let { put("steps", it) }
                         number("distanceMeters", item.distanceMeters)
+                        put("cyclingMinutes", item.cyclingMinutes)
                         number("activeCaloriesKcal", item.activeCaloriesKcal)
                         estimate?.let {
                             number(
@@ -250,9 +233,11 @@ class HealthToolExecutor(
             putChronologyHeader(from, to, measuredDates)
             put("measurementDays", measured.size)
             put("sleepBaselineMinutes", SLEEP_BASELINE_MINUTES)
+            put("sleepBaselineInterpretation", "6時間は本人の最低運用目標。回復十分の判定ではない。達成日はセッション枠で数える。")
+            put("sleepDurationNote", "sleepMinutesは睡眠ステージ合計。ステージ欠測時はセッション枠で代用し、sleepDurationSourceで区別。sleep_stages_partialは既知区間のみの合計で一部欠測。")
             put(
                 "sleepTargetHitDays",
-                measured.count { (it.sleepMinutes ?: 0L) >= SLEEP_BASELINE_MINUTES },
+                measured.count { (it.sleepSessionMinutes ?: it.sleepMinutes ?: 0L) >= SLEEP_BASELINE_MINUTES },
             )
             number(
                 "sleepDailyAverageMinutes",
@@ -269,8 +254,10 @@ class HealthToolExecutor(
                         put("relativeDay", relativeDay(item.date))
                         item.sleepMinutes?.let {
                             put("sleepMinutes", it)
-                            put("meetsSixHourBaseline", it >= SLEEP_BASELINE_MINUTES)
+                            put("meetsSixHourOpportunity", (item.sleepSessionMinutes ?: it) >= SLEEP_BASELINE_MINUTES)
                         }
+                        number("sleepSessionMinutes", item.sleepSessionMinutes)
+                        put("sleepDurationSource", item.sleepDurationSource)
                         item.sleepHeartRateAverageBpm?.let {
                             put("sleepHeartRateAverageBpm", it)
                         }
@@ -391,8 +378,7 @@ class HealthToolExecutor(
                 "あすけんからHealth Connectへ書き出されるのは摂取カロリー・たんぱく質・脂質・炭水化物。" +
                     "欠測日は0kcalとせず、未記録として扱う。" +
                     "食事回数はNutritionRecordのstart/endが近いレコードを1食にまとめて数える。" +
-                    "参考エネルギー収支(reference*)は摂取−基礎代謝−活動消費を、歩数換算ベースと" +
-                    "乖離が大きい日（差100kcal以上）に差分50%を加えた参考評価値で計算したレンジ。" +
+                    "参考収支は摂取−基礎代謝−活動消費を、歩数・記録運動モデルとデバイス値の比較レンジで計算。" +
                     "参考値で、摂取量や赤字量の指示・減量成否の判定には使わない。" +
                     "PFCエネルギー比は記録グラム×4/9/4kcalを摂取カロリーで割った参考値。",
             )

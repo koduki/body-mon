@@ -89,6 +89,9 @@ class HealthDataExporterTest {
                 cardioMinutes = 20L,
                 exerciseSessionCount = 1,
                 sleepMinutes = 390L,
+                sleepSessionMinutes = 420L,
+                sleepDurationSource = "sleep_stages",
+                cyclingMinutes = 25L,
                 moderateIntensityMinutes = 25L,
                 vigorousIntensityMinutes = 15L,
                 heartRateAverageBpm = 75L,
@@ -257,6 +260,11 @@ class HealthDataExporterTest {
 
         val decoded = Json { ignoreUnknownKeys = true }.decodeFromString<HealthDataExportPayload>(jsonString)
         assertEquals(payload, decoded)
+        val latestDay = decoded.measuredData.dailySummaries.last()
+        assertEquals(390L, latestDay.sleepMinutes)
+        assertEquals(420L, latestDay.sleepSessionMinutes)
+        assertEquals("sleep_stages", latestDay.sleepDurationSource)
+        assertEquals(25L, latestDay.cyclingMinutes)
     }
 
     @Test

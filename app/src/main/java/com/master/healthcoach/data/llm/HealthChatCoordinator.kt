@@ -70,7 +70,7 @@ class HealthChatCoordinator(
     suspend fun analyzeLatestWeek(): AdviceResponse {
         val apiKey = apiKeyStore.load() ?: error("設定画面でGemini APIキーを保存してください")
         runCatching { refreshHabitMemory(apiKey, force = false) }
-        val report = repository.getLatestWeekly() ?: repository.rebuildWeekly()
+        val report = repository.rebuildWeekly()
         val snapshot = json.decodeFromString<WeeklySnapshot>(report.snapshotJson)
         val goal = repository.getGoal()
         val prompt = buildString {
@@ -91,8 +91,7 @@ class HealthChatCoordinator(
             appendLine("会話から確認済みの習慣: ${repository.getMemory()?.summary.orEmpty()}")
             appendLine("分析の軸は次の2点です。")
             appendLine(
-                "1) カロリー収支の比較: 摂取カロリー平均と、基礎代謝・活動消費（歩数ベースを基本とし、" +
-                    "メトリクスとの乖離が大きい日は差分の50%を参考値として加えたレンジ）を対照する。" +
+                "1) カロリー収支の比較: 摂取カロリー平均と基礎代謝・活動消費の比較レンジを対照する。" +
                     "推定エネルギー収支そのものは端末内専用のため送っていません。",
             )
             appendLine(
@@ -167,6 +166,8 @@ class HealthChatCoordinator(
         ・各チャット履歴の先頭には `[発言日時: YYYY-MM-DD(曜) HH:mm（今日/昨日/...）]` が付き、日付をまたぐ箇所には `【日付変更】` が入っています。会話が昨日から今日へ連続していても、過去の発言内の「今日」「昨日」「今朝」「さっき」は必ずその発言日時の時点で解釈し、昨日の出来事や食事・運動を今日のことと混同してはいけません。（※あなたの返答に `[発言日時: ...]` タグを付ける必要はありません）
         ・ツールのメトリクス応答には `todayDate`（今日）、`yesterdayDate`（昨日）、`hasTodayRecord`（今日の記録有無）、および各レコードの `date` と `relativeDay`（「今日」「昨日」など）が含まれます。今日まだ未測定・未記録の項目では、配列の最新要素が「昨日」以前のレコードになります。必ず `date` と `relativeDay` を確認し、昨日のメトリクスを今日の数値として話したり、昨日と今日を取り違えたりしないでください。
 
+        ${HealthEvidencePolicy.instruction}
+
         【対話・コミュニケーションの指針】
         ・利用者の日々の頑張りや悩み、質問にまず共感し、聞かれたことに対して直接的かつ分かりやすく答えてください。
         ・雑談や軽い相談、短い質問に対して、毎回長文の分析レポートや複数の質問・行動提案を一方的に押し付けないでください。文脈に合った適切な長さで返答します。
@@ -175,8 +176,9 @@ class HealthChatCoordinator(
 
         【専門家としてのメトリクス評価基準】
         ・減量ペースは筋力と回復を守りながら脂肪を落とすことを優先し、28日トレンドで体重の0.3〜0.7%/週減を運用目安とします。BIA由来の体組成（体脂肪率・脂肪量・除脂肪量）は水分等で日々変動するため単日値で一喜一憂せず、7日中央値や28日傾向で判断します。除脂肪量は骨格筋量そのものではなく筋肉維持の参考指標です。
-        ・睡眠のベースライン（睡眠機会の目安）は生活リズムに合わせて「主睡眠6時間以上」とします（7時間を一律の基準にしません）。睡眠中心拍の変動も回復状態の参考として見ます。
-        ・活動消費カロリーは「歩数と運動時間からの換算値（referenceStepModelActiveKcal）」を基本とし、メトリクス（バンド値 activeCaloriesKcal）との乖離が大きい日（差100kcal以上）は差分の50%を参考値として加えて評価します（referenceEvaluatedActiveKcal / referenceActiveRangeHighKcal）。消費カロリーから摂取量や赤字量を逆算して指示することはせず、体重の推移と対照して評価します。
+        ・6時間は本人の最低運用目標です。達成しても睡眠・回復が十分とは判断しません。睡眠ステージ合計とセッション枠を区別し、ステージ欠測時の代用値を実睡眠と呼びません。眠気・疲労も確認します。
+        ・活動消費は歩数・記録運動モデルとXiaomi Bandの比較レンジです。Bandは歩数のない日常活動も推定します。差を一律に誤差とせず、どちらが真値とも断定しません。中点は連続的な参考シナリオで、校正済み消費量ではありません。摂取量・赤字量の指示はしません。
+
         ・食事方針は低脂質ダイエット（脂質エネルギー比15〜25%目安、30%超は出どころ確認、たんぱく質は体重1kgあたり1.6g以上目安）です。食事記録がある日のみを観測値とし、欠測日を0kcal扱いしません。
         ・Health Connectの「その他のワークアウト」は朝の5分ルーティン（軽い筋トレ＋有酸素の習慣KPI）として扱い、筋力維持そのものは月1回のパーソナルでの重量・回数で確認します。
         ・Health Connectの健康データが必要な場合のみ提供されたツールを呼び出して確認し、データがない場合は数値を推測せず素直に伝えてください。
@@ -213,6 +215,8 @@ class HealthChatCoordinator(
         添付された画像・文書は利用者がこのターンで明示的に送ったものだけを確認してください。
         画像から食品の量、栄養素、カロリーを正確に断定せず、読み取れた事実と推定を分けてください。
         文書に医療情報が含まれる場合も、診断や治療判断ではなく内容の整理と受診時の質問作りに留めます。
+
+        ${HealthEvidencePolicy.instruction}
 
         ボディメイク専門コーチ方針:
         ${BodyRecompositionCoachPolicy.systemInstruction}
