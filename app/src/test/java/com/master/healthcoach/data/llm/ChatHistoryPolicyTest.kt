@@ -149,5 +149,62 @@ class ChatHistoryPolicyTest {
         assertEquals("一昨日", ChatHistoryPolicy.relativeDayLabel(today.minusDays(2), today))
         assertEquals("5日前", ChatHistoryPolicy.relativeDayLabel(today.minusDays(5), today))
     }
+
+    @Test
+    fun `retains all messages within 28 days even when exceeding recent window`() {
+        val zone = ZoneId.of("Asia/Tokyo")
+        val today = LocalDate.of(2026, 10, 13)
+        // Retention cutoff is 2026-09-16T00:00:00+09:00 (28 days including today: 09-16 .. 10-13)
+        val cutoffMillis = today.minusDays(27).atStartOfDay(zone).toInstant().toEpochMilli()
+
+        val messagesWithin28Days = (1L..30L).map { id ->
+            ChatMessageEntity(
+                id = id,
+                role = if (id % 2L == 1L) "user" else "assistant",
+                content = "msg-$id",
+                createdAtEpochMillis = cutoffMillis + id * 1_000L,
+            )
+        }
+
+        assertNull(
+            ChatHistoryPolicy.maxDeletableMessageIdForRetention(
+                messagesAscending = messagesWithin28Days,
+                summarizedThroughMessageId = 30L,
+                retentionCutoffEpochMillis = cutoffMillis,
+            ),
+        )
+    }
+
+    @Test
+    fun `deletes only summarized messages older than 28 days and outside recent window`() {
+        val zone = ZoneId.of("Asia/Tokyo")
+        val today = LocalDate.of(2026, 10, 13)
+        val cutoffMillis = today.minusDays(27).atStartOfDay(zone).toInstant().toEpochMilli()
+
+        // IDs 1..5 are older than 28 days; IDs 6..30 are within 28 days (total 30 messages, recent window keeps 11..30)
+        val messages = (1L..30L).map { id ->
+            val createdAt = if (id <= 5L) {
+                cutoffMillis - (6L - id) * 60_000L
+            } else {
+                cutoffMillis + (id - 5L) * 60_000L
+            }
+            ChatMessageEntity(
+                id = id,
+                role = if (id % 2L == 1L) "user" else "assistant",
+                content = "msg-$id",
+                createdAtEpochMillis = createdAt,
+            )
+        }
+
+        assertEquals(
+            5L,
+            ChatHistoryPolicy.maxDeletableMessageIdForRetention(
+                messagesAscending = messages,
+                summarizedThroughMessageId = 25L,
+                retentionCutoffEpochMillis = cutoffMillis,
+            ),
+        )
+    }
 }
+
 

@@ -3,7 +3,9 @@ package com.master.healthcoach.data.db
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import kotlinx.serialization.Serializable
 
+@Serializable
 @Entity(tableName = "daily_health_summary")
 data class DailyHealthSummaryEntity(
     @PrimaryKey val date: String,
@@ -43,6 +45,7 @@ val DailyHealthSummaryEntity.estimatedEnergyBalanceKcal: Double?
         return intake - basal - active
     }
 
+@Serializable
 @Entity(tableName = "body_composition_daily")
 data class BodyCompositionEntity(
     @PrimaryKey val date: String,
@@ -55,6 +58,7 @@ data class BodyCompositionEntity(
     val dataOrigin: String?,
 )
 
+@Serializable
 @Entity(tableName = "health_source_status")
 data class HealthSourceStatusEntity(
     @PrimaryKey val recordType: String,
@@ -65,6 +69,7 @@ data class HealthSourceStatusEntity(
     val checkedAtEpochMillis: Long,
 )
 
+@Serializable
 @Entity(tableName = "exercise_sessions")
 data class ExerciseSessionEntity(
     @PrimaryKey val recordId: String,
@@ -77,6 +82,7 @@ data class ExerciseSessionEntity(
     val dataOrigin: String,
 )
 
+@Serializable
 @Entity(tableName = "nutrition_meals")
 data class NutritionMealEntity(
     @PrimaryKey val recordId: String,
@@ -93,6 +99,7 @@ data class NutritionMealEntity(
     val dataOrigin: String,
 )
 
+@Serializable
 @Entity(tableName = "goals")
 data class GoalEntity(
     @PrimaryKey val id: Int = 1,
@@ -108,6 +115,7 @@ data class GoalEntity(
     val dailyActiveCaloriesKcal: Double? = null,
 )
 
+@Serializable
 @Entity(tableName = "weekly_reports")
 data class WeeklyReportEntity(
     @PrimaryKey val weekStart: String,
@@ -115,6 +123,7 @@ data class WeeklyReportEntity(
     val generatedAtEpochMillis: Long,
 )
 
+@Serializable
 @Entity(tableName = "chat_messages")
 data class ChatMessageEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -124,6 +133,7 @@ data class ChatMessageEntity(
     val createdAtEpochMillis: Long,
 )
 
+@Serializable
 @Entity(tableName = "conversation_memory")
 data class ConversationMemoryEntity(
     @PrimaryKey val id: Int = 1,
@@ -131,3 +141,4 @@ data class ConversationMemoryEntity(
     val summarizedThroughMessageId: Long,
     val updatedAtEpochMillis: Long,
 )
+
