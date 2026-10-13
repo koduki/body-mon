@@ -1804,7 +1804,7 @@ private fun SettingsScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp, 10.dp, 16.dp, 34.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        SectionHeader("プロフィールと目標", "AIはここに入力した情報だけを個人化に使います")
+        SectionHeader("プロフィールと目標", "会話で伝えた年齢・身長・性別も反映されます。違う場合はここで修正できます")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SmallField(age, { age = it }, "年齢", Modifier.weight(1f), KeyboardType.Number)
             SmallField(height, { height = it }, "身長 cm", Modifier.weight(1f), KeyboardType.Decimal)
