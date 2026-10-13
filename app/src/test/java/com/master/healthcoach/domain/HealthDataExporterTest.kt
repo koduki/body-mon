@@ -206,6 +206,10 @@ class HealthDataExporterTest {
                 id = 3L,
                 role = "assistant",
                 content = "高たんぱく・低脂質で素晴らしい朝食です！",
+                modelId = "test-model",
+                policyVersion = "test-policy",
+                appVersionName = "test-version",
+                toolTraceJson = "{\"calls\":[]}",
                 createdAtEpochMillis = exportedAt.minusHours(2).plusSeconds(15).toInstant().toEpochMilli(),
             ),
         )
@@ -262,6 +266,8 @@ class HealthDataExporterTest {
 
         val decoded = Json { ignoreUnknownKeys = true }.decodeFromString<HealthDataExportPayload>(jsonString)
         assertEquals(payload, decoded)
+        assertEquals("test-model", decoded.conversationHistory.messages.last().modelId)
+        assertEquals("test-policy", decoded.conversationHistory.messages.last().policyVersion)
         val latestDay = decoded.measuredData.dailySummaries.last()
         assertEquals(390L, latestDay.sleepMinutes)
         assertEquals(420L, latestDay.sleepSessionMinutes)

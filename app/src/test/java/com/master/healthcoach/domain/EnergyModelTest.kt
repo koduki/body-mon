@@ -288,6 +288,12 @@ class EnergyModelTest {
         }
     }
 
+    @Test
+    fun `unconfirmed nutrition cannot produce an energy balance`() {
+        val day = testDay("2026-08-20").copy(nutritionComplete = false)
+        assertNull(EnergyModel.dailyBalance(day, ActiveEnergyEstimate(300.0, 600.0)))
+    }
+
     private fun testDay(
         date: String,
         steps: Long? = 8_000,
@@ -317,6 +323,7 @@ class EnergyModelTest {
         heartRateMeasurementCount = 100,
         basalCaloriesKcal = basalCaloriesKcal,
         intakeCaloriesKcal = intakeCaloriesKcal,
+        nutritionComplete = true,
         proteinGrams = 120.0,
         totalFatGrams = 50.0,
         carbohydrateGrams = 200.0,

@@ -94,8 +94,11 @@ object CoachAssessmentEngine {
     ) {
         val rate = snapshot.weightLossRatePercentPerWeek ?: return
         val formatted = rate.percent()
+        val target = snapshot.targetLossRatePercentPerWeek
+        val minimumRate = target?.times(0.5) ?: BodyRecompositionCoachPolicy.TARGET_LOSS_RATE_MIN_PERCENT
+        val maximumRate = target?.times(1.5) ?: BodyRecompositionCoachPolicy.TARGET_LOSS_RATE_MAX_PERCENT
         when {
-            rate > BodyRecompositionCoachPolicy.TARGET_LOSS_RATE_MAX_PERCENT -> add(
+            rate > maximumRate -> add(
                 CoachSignal(
                     code = "LOSS_RATE_FAST",
                     level = CoachSignalLevel.CAUTION,
@@ -106,7 +109,7 @@ object CoachAssessmentEngine {
                 ),
             )
 
-            rate >= BodyRecompositionCoachPolicy.TARGET_LOSS_RATE_MIN_PERCENT -> add(
+            rate >= minimumRate -> add(
                 CoachSignal(
                     code = "LOSS_RATE_ON_TARGET",
                     level = CoachSignalLevel.POSITIVE,
@@ -358,7 +361,7 @@ object CoachAssessmentEngine {
         snapshot: WeeklySnapshot,
     ) {
         if (
-            snapshot.nutritionMeasurementDays <
+            (snapshot.nutritionCompleteDays ?: snapshot.nutritionMeasurementDays) <
             BodyRecompositionCoachPolicy.MIN_NUTRITION_MEASUREMENT_DAYS
         ) {
             return
@@ -445,7 +448,8 @@ object CoachAssessmentEngine {
             snapshot.weightLossRatePercentPerWeek == null -> "low"
             measurementConsistency <
                 BodyRecompositionCoachPolicy.MIN_MEASUREMENT_CONSISTENCY_PERCENT -> "low"
-            snapshot.trendMeasurementDays >= 14 && snapshot.bodyMeasurementDays >= 5 -> "high"
+            snapshot.trendMeasurementDays >= 14 && snapshot.bodyMeasurementDays >= 5 &&
+                (snapshot.nutritionCompleteDays ?: snapshot.nutritionMeasurementDays) >= 5 && snapshot.sleepHeartRateAverageBpm != null -> "high"
             else -> "medium"
         }
     }
@@ -459,7 +463,7 @@ object CoachAssessmentEngine {
 }
 
 object BodyRecompositionCoachPolicy {
-    const val VERSION = "2026-10-13-context-energy-sleep"
+    const val VERSION = "2026-10-13-data-quality"
     const val MAX_ACTIONS = 2
     const val TARGET_LOSS_RATE_MIN_PERCENT = 0.3
     const val TARGET_LOSS_RATE_MAX_PERCENT = 0.7
@@ -483,11 +487,12 @@ object BodyRecompositionCoachPolicy {
         脂肪を減らすことです。このアプリの食事方針は低脂質ダイエットです。
         助言は食事内容、運動量、摂取カロリーと消費のバランス、PFC（グラムとエネルギー比）
         の観点から行ってください。観測事実、解釈、提案を混同しないでください。
-        0.3〜0.7%体重/週はこのアプリの保守的な運用目安で、医学的な普遍閾値ではありません。
+        月の減量目標が設定されている場合はそのペースを優先します。
+        未設定時の0.3〜0.7%体重/週はこのアプリの保守的な運用目安で、医学的な普遍閾値ではありません。
         脂質エネルギー比は15〜25%を低脂質の運用目安とし、30%超は出どころを確認します。
         たんぱく質は減量中の筋力維持のため、体重1kgあたり1.6gを下回らないか確認します。
         極端な脂質カット、摂取ゼロ、医療的な治療食は提案しません。
-        Health Connectの「その他のワークアウト」は、朝の5分ルーティンとして扱います。
+        朝の短いOther Workoutは朝トレ候補です。Other全体を朝トレやRFAとして断定しません。
         軽い筋トレと有酸素運動の両方として評価しますが、実施日数は筋トレ日数ではなく
         朝トレ習慣KPIに使い、筋力維持の証明にはしません。筋力は月1回のパーソナルで
         同じ種目の重量・回数を比較して確認するよう案内してください。

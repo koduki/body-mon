@@ -36,12 +36,20 @@ data class DailyHealthSummaryEntity(
     val totalFatGrams: Double? = null,
     val carbohydrateGrams: Double? = null,
     @ColumnInfo(defaultValue = "0") val mealCount: Int = 0,
+    @ColumnInfo(defaultValue = "0") val nutritionComplete: Boolean = false,
+    @ColumnInfo(defaultValue = "'legacy'") val nutritionRecordStatus: String = "legacy",
+    @ColumnInfo(defaultValue = "'{}'") val metricOriginsJson: String = "{}",
+    val heartRateCoverageMinutes: Int? = null,
+    val heartRateOutsideExerciseSamples: Int? = null,
+    @ColumnInfo(defaultValue = "0") val hikingMinutes: Long = 0,
+    @ColumnInfo(defaultValue = "0") val hiitMinutes: Long = 0,
     val dataOrigins: String,
     val updatedAtEpochMillis: Long,
 )
 
 val DailyHealthSummaryEntity.estimatedEnergyBalanceKcal: Double?
     get() {
+        if (!nutritionComplete) return null
         val intake = intakeCaloriesKcal ?: return null
         val basal = basalCaloriesKcal ?: return null
         val active = activeCaloriesKcal ?: return null
@@ -100,6 +108,7 @@ data class NutritionMealEntity(
     val carbohydrateGrams: Double?,
     val recordCount: Int,
     val dataOrigin: String,
+    @ColumnInfo(defaultValue = "0") val isDailyRecord: Boolean = false,
 )
 
 @Serializable
@@ -116,6 +125,7 @@ data class GoalEntity(
     val dailySteps: Long? = null,
     val weeklyExerciseSessions: Int? = null,
     val dailyActiveCaloriesKcal: Double? = null,
+    val monthlyWeightLossKg: Double? = null,
 )
 
 @Serializable
@@ -134,6 +144,10 @@ data class ChatMessageEntity(
     val content: String,
     val attachmentNames: String? = null,
     val createdAtEpochMillis: Long,
+    val modelId: String? = null,
+    val appVersionName: String? = null,
+    val policyVersion: String? = null,
+    val toolTraceJson: String? = null,
 )
 
 @Serializable

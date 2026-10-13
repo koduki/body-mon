@@ -35,6 +35,11 @@ import com.master.healthcoach.domain.TimedMeasurement
 import com.master.healthcoach.domain.IntervalDuration
 import com.master.healthcoach.domain.SleepDurationCalculator
 import com.master.healthcoach.domain.SleepInterval
+import com.master.healthcoach.domain.NutritionObservation
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.put
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -211,8 +216,9 @@ class HealthConnectGateway(private val context: Context) {
             val date = startDate.plusDays(offset)
             val dayStart = date.atStartOfDay(zoneId).toInstant()
             val dayEnd = date.plusDays(1).atStartOfDay(zoneId).toInstant()
-            val mainSleep = sleepRecords
-                .filter { it.endTime > dayStart && it.endTime <= dayEnd }
+            val sleepCandidates = sleepRecords.filter { it.endTime > dayStart && it.endTime <= dayEnd }
+            val preferredSleep = sleepCandidates.filter { it.metadata.dataOrigin.packageName == "com.xiaomi.wearable" }
+            val mainSleep = preferredSleep.ifEmpty { sleepCandidates }
                 .maxByOrNull { Duration.between(it.startTime, it.endTime) }
             val sleepDuration = mainSleep?.let { sleep ->
                 SleepDurationCalculator.calculate(
@@ -248,13 +254,13 @@ class HealthConnectGateway(private val context: Context) {
                 session.startTime >= dayStart && session.startTime < dayEnd
             }
             val strengthMinutes = sessions
-                .filter { classifyExercise(it.exerciseType) == ExerciseClass.STRENGTH }
+                .filter { classifyExerciseSession(it.exerciseType, it.startTime, it.endTime, zoneId) == ExerciseClass.STRENGTH }
                 .sumOf { Duration.between(it.startTime, it.endTime).toMinutes().coerceAtLeast(0) }
             val morningRoutineMinutes = sessions
-                .filter { classifyExercise(it.exerciseType) == ExerciseClass.MORNING_ROUTINE }
+                .filter { classifyExerciseSession(it.exerciseType, it.startTime, it.endTime, zoneId) == ExerciseClass.MORNING_ROUTINE }
                 .sumOf { Duration.between(it.startTime, it.endTime).toMinutes().coerceAtLeast(0) }
             val cardioMinutes = sessions
-                .filter { classifyExercise(it.exerciseType).contributesToCardioMinutes() }
+                .filter { classifyExerciseSession(it.exerciseType, it.startTime, it.endTime, zoneId).contributesToCardioMinutes() }
                 .sumOf { Duration.between(it.startTime, it.endTime).toMinutes().coerceAtLeast(0) }
             val cyclingMinutes = IntervalDuration.unionMinutes(
                 dayStart,
@@ -267,6 +273,24 @@ class HealthConnectGateway(private val context: Context) {
             val allMinutes = sessions.sumOf {
                 Duration.between(it.startTime, it.endTime).toMinutes().coerceAtLeast(0)
             }
+            val dayNutrition = nutritionRecords.filter { it.startTime >= dayStart && it.startTime < dayEnd }
+            val dayHeartRecords = heartRateRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }
+            val dayHeartSamples = dayHeartRecords.flatMap { it.samples }.filter { it.time >= dayStart && it.time < dayEnd }
+            val outsideExerciseSamples = dayHeartSamples.count { sample ->
+                exercises.none { sample.time >= it.startTime && sample.time < it.endTime }
+            }
+            val originsByMetric = buildJsonObject {
+                fun candidates(name: String, origins: List<String>) {
+                    put(name, buildJsonArray { origins.distinct().sorted().forEach { add(JsonPrimitive(it)) } })
+                }
+                candidates("stepsCandidates", stepRecords.inDay(dayStart, dayEnd) { it.startTime }.map { it.metadata.dataOrigin.packageName })
+                candidates("distanceCandidates", distanceRecords.inDay(dayStart, dayEnd) { it.startTime }.map { it.metadata.dataOrigin.packageName })
+                candidates("activeCaloriesCandidates", activeCalorieRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }.map { it.metadata.dataOrigin.packageName })
+                candidates("heartRateCandidates", dayHeartRecords.map { it.metadata.dataOrigin.packageName })
+                candidates("nutritionCandidates", dayNutrition.map { it.metadata.dataOrigin.packageName })
+                mainSleep?.let { put("selectedSleepOrigin", it.metadata.dataOrigin.packageName) }
+                put("activitySelection", "Health Connect aggregate priority; candidates are not proof of selected contributions")
+            }.toString()
             val origins = buildList {
                 addAll(sessions.map { it.metadata.dataOrigin.packageName })
                 addAll(stepRecords.inDay(dayStart, dayEnd) { it.startTime }
@@ -326,11 +350,22 @@ class HealthConnectGateway(private val context: Context) {
                 basalCaloriesKcal = result[
                     BasalMetabolicRateRecord.BASAL_CALORIES_TOTAL
                 ]?.inKilocalories,
-                intakeCaloriesKcal = result[NutritionRecord.ENERGY_TOTAL]?.inKilocalories,
-                proteinGrams = result[NutritionRecord.PROTEIN_TOTAL]?.inGrams,
-                totalFatGrams = result[NutritionRecord.TOTAL_FAT_TOTAL]?.inGrams,
-                carbohydrateGrams = result[NutritionRecord.TOTAL_CARBOHYDRATE_TOTAL]?.inGrams,
-                mealCount = mealsByDate[date.toString()]?.size ?: 0,
+                intakeCaloriesKcal = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.energy?.inKilocalories }, result[NutritionRecord.ENERGY_TOTAL]?.inKilocalories),
+                proteinGrams = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.protein?.inGrams }, result[NutritionRecord.PROTEIN_TOTAL]?.inGrams),
+                totalFatGrams = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.totalFat?.inGrams }, result[NutritionRecord.TOTAL_FAT_TOTAL]?.inGrams),
+                carbohydrateGrams = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.totalCarbohydrate?.inGrams }, result[NutritionRecord.TOTAL_CARBOHYDRATE_TOTAL]?.inGrams),
+                mealCount = mealsByDate[date.toString()]?.count { !it.isDailyTotal && it.mealType in 1..4 } ?: 0,
+                nutritionRecordStatus = when {
+                    dayNutrition.isEmpty() -> "no_records"
+                    dayNutrition.all { it.energy == null && it.protein == null && it.totalFat == null && it.totalCarbohydrate == null } -> "empty_placeholder"
+                    mealsByDate[date.toString()].orEmpty().any { it.isDailyTotal } -> "daily_record_unverified"
+                    else -> "meal_records_unverified"
+                },
+                metricOriginsJson = originsByMetric,
+                heartRateCoverageMinutes = dayHeartSamples.takeIf { it.isNotEmpty() }?.map { it.time.epochSecond / 60 }?.distinct()?.size,
+                heartRateOutsideExerciseSamples = dayHeartSamples.takeIf { it.isNotEmpty() }?.let { outsideExerciseSamples },
+                hikingMinutes = sessions.filter { it.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_HIKING }.sumOf { Duration.between(it.startTime, it.endTime).toMinutes() },
+                hiitMinutes = sessions.filter { it.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_HIGH_INTENSITY_INTERVAL_TRAINING }.sumOf { Duration.between(it.startTime, it.endTime).toMinutes() },
                 dataOrigins = origins,
                 updatedAtEpochMillis = System.currentTimeMillis(),
             )
@@ -453,8 +488,10 @@ class HealthConnectGateway(private val context: Context) {
                 startEpochMillis = session.startTime.toEpochMilli(),
                 endEpochMillis = session.endTime.toEpochMilli(),
                 exerciseType = session.exerciseType,
-                exerciseLabel = exerciseLabel(session.exerciseType),
-                category = classifyExercise(session.exerciseType).name.lowercase(),
+                exerciseLabel = if (classifyExerciseSession(session.exerciseType, session.startTime, session.endTime, zoneId) == ExerciseClass.MORNING_ROUTINE) {
+                    "朝トレ候補（短い一般運動）"
+                } else exerciseLabel(session.exerciseType),
+                category = classifyExerciseSession(session.exerciseType, session.startTime, session.endTime, zoneId).name.lowercase(),
                 durationMinutes = Duration.between(session.startTime, session.endTime)
                     .toMinutes().coerceAtLeast(0),
                 dataOrigin = origin,
@@ -474,6 +511,7 @@ class HealthConnectGateway(private val context: Context) {
                 carbohydrateGrams = meal.carbohydrateGrams,
                 recordCount = meal.recordCount,
                 dataOrigin = meal.origin,
+                isDailyRecord = meal.isDailyTotal,
             )
         }
 

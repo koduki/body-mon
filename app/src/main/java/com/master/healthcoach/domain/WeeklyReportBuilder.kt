@@ -27,18 +27,20 @@ object WeeklyReportBuilder {
         body: List<BodyCompositionEntity>,
         goal: GoalEntity? = null,
         zoneId: ZoneId = ZoneId.systemDefault(),
+        includeToday: Boolean = false,
     ): WeeklySnapshot {
-        val currentStart = today.minusDays(6)
+        val periodEnd = if (includeToday) today else today.minusDays(1)
+        val currentStart = periodEnd.minusDays(6)
         val previousStart = currentStart.minusDays(7)
         val previousEnd = currentStart.minusDays(1)
-        val trendStart = today.minusDays(TREND_DAYS - 1)
+        val trendStart = periodEnd.minusDays(TREND_DAYS - 1)
 
-        val currentDaily = dailyInRange(daily, currentStart, today)
+        val currentDaily = dailyInRange(daily, currentStart, periodEnd)
         val previousDaily = dailyInRange(daily, previousStart, previousEnd)
-        val trendDaily = dailyInRange(daily, trendStart, today)
-        val currentBody = bodyInRange(body, currentStart, today)
+        val trendDaily = dailyInRange(daily, trendStart, periodEnd)
+        val currentBody = bodyInRange(body, currentStart, periodEnd)
         val previousBody = bodyInRange(body, previousStart, previousEnd)
-        val trendBody = bodyInRange(body, trendStart, today)
+        val trendBody = bodyInRange(body, trendStart, periodEnd)
 
         val currentWeight = TrendMath.median(currentBody.mapNotNull { it.weightKg })
         val previousWeight = TrendMath.median(previousBody.mapNotNull { it.weightKg })
@@ -118,16 +120,16 @@ object WeeklyReportBuilder {
         val currentMvpaEquivalent = moderateEquivalentMinutes(currentDaily)
         val previousMvpaEquivalent = moderateEquivalentMinutes(previousDaily)
         val intakeCaloriesAverage = averageDouble(
-            currentDaily.mapNotNull { it.intakeCaloriesKcal },
+            currentDaily.filter { it.nutritionComplete }.mapNotNull { it.intakeCaloriesKcal },
         )
         val proteinAverageGrams = averageDouble(
-            currentDaily.mapNotNull { it.proteinGrams },
+            currentDaily.filter { it.nutritionComplete }.mapNotNull { it.proteinGrams },
         )
         val fatAverageGrams = averageDouble(
-            currentDaily.mapNotNull { it.totalFatGrams },
+            currentDaily.filter { it.nutritionComplete }.mapNotNull { it.totalFatGrams },
         )
         val carbohydrateAverageGrams = averageDouble(
-            currentDaily.mapNotNull { it.carbohydrateGrams },
+            currentDaily.filter { it.nutritionComplete }.mapNotNull { it.carbohydrateGrams },
         )
         val activeSummary = EnergyModel.summarizeActive(
             days = currentDaily,
@@ -141,18 +143,34 @@ object WeeklyReportBuilder {
             heightCm = goal?.heightCm,
             sex = goal?.sex,
         )
-        val trendIntakeDays = trendDaily.count { it.intakeCaloriesKcal != null }
-        val trendIntakeDailyAverage = averageDouble(trendDaily.mapNotNull { it.intakeCaloriesKcal })
+        val comparableTrendDaily = trendDaily.filter { day ->
+            day.nutritionComplete && day.intakeCaloriesKcal != null && day.basalCaloriesKcal != null &&
+                EnergyModel.dailyActive(day, body, goal?.heightCm, goal?.sex) != null
+        }
+        val trendIntakeDays = comparableTrendDaily.size
+        val trendIntakeDailyAverage = averageDouble(comparableTrendDaily.mapNotNull { it.intakeCaloriesKcal })
         val adaptiveTdee = EnergyModel.checkAdaptiveTdee(
             weightTrendKgPerWeek = weightTrend,
             intakeDailyAverageKcal = trendIntakeDailyAverage,
             intakeDaysInTrend = trendIntakeDays,
-            basalCaloriesDailyAverage = averageDouble(currentDaily.mapNotNull { it.basalCaloriesKcal }),
-            deviceActiveDailyAverage = averageDouble(currentDaily.mapNotNull { it.activeCaloriesKcal }),
-            stepModelActiveDailyAverage = activeSummary?.stepModelDailyAverageKcal,
+            basalCaloriesDailyAverage = averageDouble(comparableTrendDaily.mapNotNull { it.basalCaloriesKcal }),
+            deviceActiveDailyAverage = averageDouble(comparableTrendDaily.mapNotNull { it.activeCaloriesKcal }),
+            stepModelActiveDailyAverage = EnergyModel.summarizeActive(comparableTrendDaily, body, goal?.heightCm, goal?.sex)?.stepModelDailyAverageKcal,
         )
 
         val limitations = buildList {
+            if (goal?.deadline?.let { runCatching { LocalDate.parse(it) }.getOrNull()?.isBefore(today) } == true) {
+                add("目標期限を過ぎています。現在の目標ペース・期限を設定で確認してください")
+            }
+            if (currentDaily.any { it.intakeCaloriesKcal != null && !it.nutritionComplete }) {
+                add("全食記録済みと確認されていない日は収支・摂取不足の判定を保留します。設定で記録範囲を確認できます")
+            }
+            if (currentDaily.any { it.nutritionRecordStatus == "daily_record_unverified" }) {
+                add("栄養は日次記録形式を含みます。食事回数と全食記録の有無は確定できません")
+            }
+            if (currentDaily.any { it.heartRateOutsideExerciseSamples == 0 && it.heartRateAverageBpm != null }) {
+                add("心拍サンプルが運動中のみの日があります。日別平均を安静時心拍や回復判定に使いません")
+            }
             if (currentBody.size < 3) {
                 add("今週の体組成測定が3日未満です")
             }
@@ -194,7 +212,7 @@ object WeeklyReportBuilder {
 
         return WeeklySnapshot(
             weekStart = currentStart.toString(),
-            weekEnd = today.toString(),
+            weekEnd = periodEnd.toString(),
             fatMassChangeKg = difference(currentFatMass, previousFatMass),
             leanMassChangeKg = difference(currentLeanMass, previousLeanMass),
             weightChangeKg = difference(currentWeight, previousWeight),
@@ -285,17 +303,18 @@ object WeeklyReportBuilder {
             totalFatDailyAverageGrams = fatAverageGrams,
             carbohydrateDailyAverageGrams = carbohydrateAverageGrams,
             nutritionMeasurementDays = currentDaily.count { it.intakeCaloriesKcal != null },
+            nutritionCompleteDays = currentDaily.count { it.intakeCaloriesKcal != null && it.nutritionComplete },
             previousWeekIntakeCaloriesDailyAverage = averageDouble(
-                previousDaily.mapNotNull { it.intakeCaloriesKcal },
+                previousDaily.filter { it.nutritionComplete }.mapNotNull { it.intakeCaloriesKcal },
             ),
             previousWeekProteinDailyAverageGrams = averageDouble(
-                previousDaily.mapNotNull { it.proteinGrams },
+                previousDaily.filter { it.nutritionComplete }.mapNotNull { it.proteinGrams },
             ),
             previousWeekTotalFatDailyAverageGrams = averageDouble(
-                previousDaily.mapNotNull { it.totalFatGrams },
+                previousDaily.filter { it.nutritionComplete }.mapNotNull { it.totalFatGrams },
             ),
             previousWeekCarbohydrateDailyAverageGrams = averageDouble(
-                previousDaily.mapNotNull { it.carbohydrateGrams },
+                previousDaily.filter { it.nutritionComplete }.mapNotNull { it.carbohydrateGrams },
             ),
             estimatedEnergyBalanceDailyAverage = averageDouble(
                 currentDaily.mapNotNull { it.estimatedEnergyBalanceKcal },
@@ -327,6 +346,9 @@ object WeeklyReportBuilder {
             adaptiveTdeeLowKcal = adaptiveTdee?.inferredTdeeRange?.lowKcal,
             adaptiveTdeeHighKcal = adaptiveTdee?.inferredTdeeRange?.highKcal,
             adaptiveTdeeIntakeDays = adaptiveTdee?.intakeDays ?: 0,
+            targetLossRatePercentPerWeek = goal?.monthlyWeightLossKg?.takeIf { it > 0 }?.let { monthly ->
+                currentWeight?.takeIf { it > 0 }?.let { monthly / 4.345 / it * 100.0 }
+            },
         )
     }
 

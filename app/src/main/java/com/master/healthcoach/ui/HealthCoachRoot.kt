@@ -96,6 +96,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.master.healthcoach.BuildConfig
+import com.master.healthcoach.data.llm.ConversationContextPolicy
 import com.master.healthcoach.data.db.BodyCompositionEntity
 import com.master.healthcoach.data.db.DailyHealthSummaryEntity
 import com.master.healthcoach.data.db.GoalEntity
@@ -145,6 +146,7 @@ fun HealthCoachRoot(
     onRemoveChatAttachment: (String) -> Unit,
     onAnalyzeWeek: () -> Unit,
     onExportData: (Uri) -> Unit = {},
+    onConfirmNutritionComplete: (String, Boolean) -> Unit = { _, _ -> },
     onClearLocalData: () -> Unit,
     onMessageShown: () -> Unit,
 ) {
@@ -218,6 +220,7 @@ fun HealthCoachRoot(
                         onRequestPermissions = onRequestPermissions,
                         onOpenHealthConnect = onOpenHealthConnect,
                         onExportData = onExportData,
+                        onConfirmNutritionComplete = onConfirmNutritionComplete,
                         onClearLocalData = onClearLocalData,
                     )
                 }
@@ -380,9 +383,9 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                     }
                     Text(
                         if (morningRoutineMinutes > 0) {
-                            "記録値 $morningRoutineMinutes 分。軽い筋トレ＋有酸素として評価します。"
+                            "記録値 $morningRoutineMinutes 分。朝の短い一般運動を朝トレ候補として集計します。"
                         } else {
-                            "Health Connectの「その他のワークアウト」が記録されると実施扱いになります。"
+                            "朝4〜10時開始・1〜15分の一般運動がある日を朝トレ候補として数えます。"
                         },
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -522,7 +525,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
                 MetricCard(
                     "食事回数",
-                    todayMeals.size.takeIf { it > 0 }?.let { "$it 回" }
+                    todayMeals.count { !it.isDailyRecord && it.mealType in 1..4 }.takeIf { it > 0 }?.let { "$it 回" }
                         ?: todayDaily?.mealCount?.takeIf { it > 0 }?.let { "$it 回" }
                         ?: "未取得",
                     "start/endクラスタ",
@@ -580,6 +583,12 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 MealPfcRow(meal)
             }
         }
+        item {
+            todayDaily?.let { day ->
+                Text("心拍の記録範囲: ${day.heartRateCoverageMinutes?.let { "$it 分" } ?: "未確認"}。運動外サンプル: ${day.heartRateOutsideExerciseSamples ?: "未確認"}。日別平均は安静時心拍ではありません。", style = MaterialTheme.typography.bodySmall)
+                if (day.nutritionRecordStatus == "daily_record_unverified") Text("食事は日次記録形式です。食事回数と全食記録の有無は未確認です。", style = MaterialTheme.typography.bodySmall)
+            }
+        }
         item { SectionHeader("睡眠と心拍", "本日に終了した主睡眠と本日の心拍記録") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -599,7 +608,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 MetricCard(
                     "睡眠中心拍",
                     todayDaily?.sleepHeartRateAverageBpm?.let { "$it bpm" } ?: "未取得",
-                    "主睡眠区間の平均",
+                    if (todayDaily?.sleepMinutes != null && todayDaily.sleepHeartRateAverageBpm == null) "睡眠区間内の心拍未提供" else "主睡眠区間の平均",
                     Modifier.weight(1f),
                 )
             }
@@ -1065,7 +1074,7 @@ private fun TrendsScreen(state: MainUiState) {
                         "食事回数",
                         "回",
                         dates.map { date ->
-                            val count = dailyByDate[date.toString()]?.mealCount
+                            val count = dailyByDate[date.toString()]?.mealCount?.takeIf { it > 0 }
                             TrendPoint(
                                 date,
                                 count?.takeIf { it > 0 }?.toDouble(),
@@ -1586,7 +1595,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                                         report.totalFatDailyAverageGrams,
                                         report.previousWeekTotalFatDailyAverageGrams,
                                     )?.let { "前週比 ${signed(it)} g" }
-                                    ?: "本日までの7日平均",
+                                    ?: "昨日までの7日平均",
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -1599,7 +1608,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                                         report.carbohydrateDailyAverageGrams,
                                         report.previousWeekCarbohydrateDailyAverageGrams,
                                     )?.let { "前週比 ${signed(it)} g" }
-                                    ?: "本日までの7日平均",
+                                    ?: "昨日までの7日平均",
                                 modifier = Modifier.weight(1f),
                             )
                         }
@@ -1764,6 +1773,7 @@ private fun SettingsScreen(
     onRequestPermissions: () -> Unit,
     onOpenHealthConnect: () -> Unit,
     onExportData: (Uri) -> Unit,
+    onConfirmNutritionComplete: (String, Boolean) -> Unit,
     onClearLocalData: () -> Unit,
 ) {
     var age by rememberSaveable(state.goal) { mutableStateOf(state.goal?.age?.toString().orEmpty()) }
@@ -1777,6 +1787,7 @@ private fun SettingsScreen(
     var leanMinimum by rememberSaveable(state.goal) { mutableStateOf(state.goal?.minimumLeanMassKg.clean().orEmpty()) }
     var steps by rememberSaveable(state.goal) { mutableStateOf(state.goal?.dailySteps?.toString().orEmpty()) }
     var sessions by rememberSaveable(state.goal) { mutableStateOf(state.goal?.weeklyExerciseSessions?.toString().orEmpty()) }
+    var monthlyLoss by rememberSaveable(state.goal) { mutableStateOf(state.goal?.monthlyWeightLossKg.clean().orEmpty()) }
     var calories by rememberSaveable(state.goal) { mutableStateOf(state.goal?.dailyActiveCaloriesKcal.clean().orEmpty()) }
     var apiKey by rememberSaveable { mutableStateOf("") }
     var model by rememberSaveable(state.modelId) { mutableStateOf(state.modelId) }
@@ -1827,6 +1838,11 @@ private fun SettingsScreen(
                 KeyboardType.Number,
             )
         }
+        SmallField(monthlyLoss, { monthlyLoss = it }, "月の減量目標 kg（任意）", Modifier.fillMaxWidth(), KeyboardType.Decimal)
+        if (state.goal?.deadline?.let { runCatching { LocalDate.parse(it).isBefore(LocalDate.now()) }.getOrDefault(false) } == true) {
+            Text("目標期限を過ぎています。現在の期限と減量ペースをご確認ください")
+        }
+        ConversationContextPolicy.profileConflicts(state.conversationMemory, state.goal).forEach { Text(it) }
         SmallField(
             calories,
             { calories = it },
@@ -1854,6 +1870,7 @@ private fun SettingsScreen(
                         dailySteps = steps.toLongOrNull(),
                         weeklyExerciseSessions = sessions.toIntOrNull(),
                         dailyActiveCaloriesKcal = calories.toDoubleOrNull(),
+                        monthlyWeightLossKg = monthlyLoss.toDoubleOrNull()?.takeIf { it > 0 },
                     ),
                 )
             },
@@ -1951,6 +1968,16 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        SectionHeader("食事記録の範囲", "酒・間食も含め全食を記録した日だけチェックします。未確認日は収支を判定しません")
+        state.daily.filter { it.intakeCaloriesKcal != null }.take(28).forEach { day ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Checkbox(
+                    checked = day.nutritionComplete,
+                    onCheckedChange = { onConfirmNutritionComplete(day.date, it) },
+                )
+                Text("${day.date} 全食記録済み")
+            }
+        }
         SectionHeader("データ管理", "28日間の実測データと会話履歴のJSON出力・端末内データの削除")
         Button(
             onClick = { exportLauncher.launch(HealthDataExporter.defaultFileName()) },

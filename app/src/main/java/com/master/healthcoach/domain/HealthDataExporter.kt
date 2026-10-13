@@ -19,7 +19,7 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 data class HealthDataExportPayload(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val appVersionName: String = BuildConfig.VERSION_NAME,
     val appVersionCode: Int = BuildConfig.VERSION_CODE,
     val exportedAtIso: String,
@@ -57,6 +57,10 @@ data class ExportedChatMessage(
     val attachmentNames: List<String> = emptyList(),
     val createdAtEpochMillis: Long,
     val createdAtIso: String,
+    val modelId: String? = null,
+    val appVersionName: String? = null,
+    val policyVersion: String? = null,
+    val toolTraceJson: String? = null,
 )
 
 @Serializable
@@ -139,6 +143,10 @@ object HealthDataExporter {
                         .orEmpty(),
                     createdAtEpochMillis = msg.createdAtEpochMillis,
                     createdAtIso = formatIso(msg.createdAtEpochMillis, zoneId),
+                    modelId = msg.modelId,
+                    appVersionName = msg.appVersionName,
+                    policyVersion = msg.policyVersion,
+                    toolTraceJson = msg.toolTraceJson,
                 )
             }
 

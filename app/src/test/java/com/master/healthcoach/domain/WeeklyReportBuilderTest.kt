@@ -45,7 +45,7 @@ class WeeklyReportBuilderTest {
             weeklyExerciseSessions = 7,
         )
 
-        val report = WeeklyReportBuilder.build(today, daily, body, goal, zoneId)
+        val report = WeeklyReportBuilder.build(today, daily, body, goal, zoneId, includeToday = true)
 
         assertEquals(-0.70, report.weightChangeKg!!, 0.001)
         assertEquals(-0.56, report.fatMassChangeKg!!, 0.001)
@@ -98,7 +98,7 @@ class WeeklyReportBuilderTest {
             )
         }
 
-        val report = WeeklyReportBuilder.build(today, daily, body, zoneId = zoneId)
+        val report = WeeklyReportBuilder.build(today, daily, body, zoneId = zoneId, includeToday = true)
 
         assertEquals(-0.70, report.weightTrendKgPerWeek!!, 0.001)
     }
@@ -112,7 +112,7 @@ class WeeklyReportBuilderTest {
             daily = emptyList(),
             body = emptyList(),
             zoneId = zoneId,
-        )
+         includeToday = true)
 
         assertEquals(null, report.weightLossRatePercentPerWeek)
         assertNotNull(report.dataLimitations.find { it.contains("28日トレンド") })
@@ -140,7 +140,7 @@ class WeeklyReportBuilderTest {
             daily = daily,
             body = emptyList(),
             zoneId = zoneId,
-        )
+         includeToday = true)
 
         assertEquals(1, report.morningRoutineDays)
         assertEquals(5L, report.morningRoutineMinutes)
@@ -179,7 +179,7 @@ class WeeklyReportBuilderTest {
             daily = daily,
             body = emptyList(),
             zoneId = zoneId,
-        )
+         includeToday = true)
 
         assertEquals(2_000.0, report.intakeCaloriesDailyAverage!!, 0.001)
         assertEquals(120.0, report.proteinDailyAverageGrams!!, 0.001)
@@ -203,7 +203,7 @@ class WeeklyReportBuilderTest {
             daily = daily,
             body = emptyList(),
             zoneId = zoneId,
-        )
+         includeToday = true)
 
         // 360, 380, 410, 420, 370 are >= 360 (5 days); 355 and 330 are < 360
         assertEquals(5, report.sleepTargetHitDays)
@@ -216,7 +216,7 @@ class WeeklyReportBuilderTest {
             daily(today.minusDays(offset.toLong()), sleepMinutes = 330)
                 .copy(sleepSessionMinutes = 390, sleepDurationSource = "sleep_stages")
         }
-        val report = WeeklyReportBuilder.build(today, daily, emptyList(), zoneId = zoneId)
+        val report = WeeklyReportBuilder.build(today, daily, emptyList(), zoneId = zoneId, includeToday = true)
         assertEquals(7, report.sleepTargetHitDays)
         assertEquals(330L, report.sleepDailyAverageMinutes)
     }
@@ -229,9 +229,32 @@ class WeeklyReportBuilderTest {
                 sleepDurationSource = if (offset == 0) "legacy_session" else "sleep_stages_partial",
             )
         }
-        val report = WeeklyReportBuilder.build(today, daily, emptyList(), zoneId = zoneId)
+        val report = WeeklyReportBuilder.build(today, daily, emptyList(), zoneId = zoneId, includeToday = true)
         assertTrue(report.dataLimitations.any { it.contains("セッション枠で代用") })
         assertTrue(report.dataLimitations.any { it.contains("既知の睡眠区間合計") })
+    }
+
+    @Test
+    fun `default weekly aggregation excludes current morning cumulative data`() {
+        val today = LocalDate.of(2026, 8, 20)
+        val days = (1..14).map { daily(today.minusDays(it.toLong()), steps = 10000) } + daily(today, steps = 100)
+        val report = WeeklyReportBuilder.build(today, days, emptyList(), zoneId = zoneId)
+        assertEquals(today.minusDays(1).toString(), report.weekEnd)
+        assertEquals(today.minusDays(7).toString(), report.weekStart)
+        assertEquals(10000L, report.stepsDailyAverage)
+        assertEquals(10000L, report.previousWeekStepsDailyAverage)
+    }
+
+    @Test
+    fun `unconfirmed meal records remain counted but cannot generate dietary averages`() {
+        val today = LocalDate.of(2026, 8, 20)
+        val days = (1..7).map { daily(today.minusDays(it.toLong())).copy(nutritionComplete = false) }
+        val report = WeeklyReportBuilder.build(today, days, emptyList(), zoneId = zoneId)
+        assertEquals(7, report.nutritionMeasurementDays)
+        assertEquals(0, report.nutritionCompleteDays)
+        assertEquals(null, report.intakeCaloriesDailyAverage)
+        assertEquals(null, report.referenceEnergyBalanceLowKcal)
+        assertEquals(null, report.adaptiveTdeeLowKcal)
     }
 
     private fun daily(
@@ -271,6 +294,7 @@ class WeeklyReportBuilderTest {
         heartRateMeasurementCount = 100,
         basalCaloriesKcal = 1_650.0,
         intakeCaloriesKcal = intakeCaloriesKcal,
+        nutritionComplete = true,
         proteinGrams = proteinGrams,
         totalFatGrams = totalFatGrams,
         carbohydrateGrams = carbohydrateGrams,
