@@ -1,6 +1,14 @@
 package com.master.healthcoach.data
 
 import androidx.room.withTransaction
+import com.master.healthcoach.BuildConfig
+import com.master.healthcoach.data.db.AppMetadataEntity
+import com.master.healthcoach.data.db.ReportArchiveEntity
+import com.master.healthcoach.data.diagnostics.DiagnosticsStore
+import com.master.healthcoach.data.llm.ConversationContextPolicy
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.*
+import java.util.UUID
 import com.master.healthcoach.data.db.BodyCompositionEntity
 import com.master.healthcoach.data.db.ChatMessageEntity
 import com.master.healthcoach.data.db.ConversationMemoryEntity
@@ -30,6 +38,7 @@ class HealthRepository(
     private val database: HealthCoachDatabase,
     private val gateway: HealthConnectGateway,
     private val json: Json,
+    val diagnostics: DiagnosticsStore? = null,
 ) {
     private val dao = database.dao()
 
@@ -53,6 +62,25 @@ class HealthRepository(
     suspend fun hasBackgroundPermission(): Boolean = gateway.hasBackgroundPermission()
 
     suspend fun sync(): WeeklyReportEntity {
+        val runId = DiagnosticsStore.id()
+        val started = System.nanoTime()
+        diagnostics?.event("sync", "started", correlation = runId)
+        dao.setMetadata(AppMetadataEntity("lastSyncAttempt", System.currentTimeMillis().toString()))
+        try {
+            val report = syncInternal()
+            dao.setMetadata(AppMetadataEntity("lastSyncSuccess", System.currentTimeMillis().toString()))
+            dao.setMetadata(AppMetadataEntity("lastSyncOutcome", "success"))
+            diagnostics?.event("sync", "success", (System.nanoTime() - started) / 1_000_000, runId)
+            return report
+        } catch (e: CancellationException) { throw e
+        } catch (e: Exception) {
+            dao.setMetadata(AppMetadataEntity("lastSyncOutcome", "failure"))
+            diagnostics?.event("sync", "failure", (System.nanoTime() - started) / 1_000_000, runId, error = e)
+            throw e
+        }
+    }
+
+    private suspend fun syncInternal(): WeeklyReportEntity {
         val today = LocalDate.now()
         val earliestDaily = dao.earliestDailyDate()?.let {
             runCatching { LocalDate.parse(it) }.getOrNull()
@@ -83,10 +111,11 @@ class HealthRepository(
             )
             dao.upsertNutritionMeals(bundle.nutritionMeals)
         }
+        diagnostics?.event("sync", "success", counters = mapOf("days" to bundle.daily.size.toLong(), "body" to bundle.body.size.toLong(), "sessions" to bundle.exerciseSessions.size.toLong(), "meals" to bundle.nutritionMeals.size.toLong()))
         return rebuildWeekly()
     }
 
-    suspend fun rebuildWeekly(today: LocalDate = LocalDate.now()): WeeklyReportEntity {
+    suspend fun rebuildWeekly(today: LocalDate = LocalDate.now()): WeeklyReportEntity = database.withTransaction {
         val from = today.minusDays(89).toString()
         val daily = dao.getDaily(from, today.toString())
         val body = dao.getBody(from, today.toString())
@@ -96,11 +125,26 @@ class HealthRepository(
             body = body,
             goal = dao.getGoal(),
         )
-        return WeeklyReportEntity(
+        WeeklyReportEntity(
             weekStart = snapshot.weekStart,
             snapshotJson = json.encodeToString(snapshot),
             generatedAtEpochMillis = System.currentTimeMillis(),
-        ).also { dao.upsertWeekly(it) }
+        ).also {
+            dao.upsertWeekly(it)
+            val inputs = buildJsonObject {
+                put("daily", json.encodeToJsonElement(daily)); put("body", json.encodeToJsonElement(body))
+                put("goal", json.encodeToJsonElement(dao.getGoal()))
+            }.toString()
+            if (inputs.toByteArray().size <= 160_000) {
+                dao.archiveReport(ReportArchiveEntity(
+                    id = UUID.randomUUID().toString(), periodStart = snapshot.weekStart, periodEnd = snapshot.weekEnd,
+                    generatedAt = it.generatedAtEpochMillis, revision = dao.metadata("revision")?.toLongOrNull() ?: 0,
+                    policyVersion = ConversationContextPolicy.VERSION, commitSha = BuildConfig.COMMIT_SHA,
+                    snapshotJson = it.snapshotJson, inputsJson = inputs,
+                ))
+                dao.pruneReports(System.currentTimeMillis() - 90 * DiagnosticsStore.DAY)
+            }
+        }
     }
 
     suspend fun saveGoal(goal: GoalEntity) {
@@ -196,6 +240,7 @@ class HealthRepository(
             keepRecent = keepRecent,
         ) ?: return
         dao.deleteMessagesUpTo(maxDeletable)
+        dao.pruneEvidence(System.currentTimeMillis() - 7 * DiagnosticsStore.DAY)
     }
 
     suspend fun exportTwentyEightDaysJson(
@@ -235,6 +280,10 @@ class HealthRepository(
             dao.clearWeekly()
             dao.clearMessages()
             dao.clearMemory()
+            dao.clearEvents()
+            dao.clearEvidence()
+            dao.clearReports()
+            dao.clearMetadata()
         }
     }
 }

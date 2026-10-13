@@ -152,6 +152,11 @@ fun HealthCoachRoot(
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(AppTab.TODAY) }
     val snackbar = remember { SnackbarHostState() }
+    val diagnosticContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    LaunchedEffect(selectedTab) {
+        (diagnosticContext as? com.master.healthcoach.HealthCoachApplication)?.container?.diagnostics
+            ?.event("ui_tab", "success", counters = mapOf("tab" to selectedTab.ordinal.toLong()))
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -199,7 +204,7 @@ fun HealthCoachRoot(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (!state.hasCorePermissions) {
+            if (!state.hasCorePermissions && selectedTab != AppTab.SETTINGS) {
                 PermissionScreen(state, onRequestPermissions, onOpenHealthConnect)
             } else {
                 when (selectedTab) {
@@ -1804,6 +1809,7 @@ private fun SettingsScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp, 10.dp, 16.dp, 34.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        TunnelSettingsCard()
         SectionHeader("プロフィールと目標", "会話で伝えた年齢・身長・性別も反映されます。違う場合はここで修正できます")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SmallField(age, { age = it }, "年齢", Modifier.weight(1f), KeyboardType.Number)

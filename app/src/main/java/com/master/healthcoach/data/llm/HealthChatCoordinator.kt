@@ -46,6 +46,8 @@ class HealthChatCoordinator(
                 .takeIf { it.isNotEmpty() }
                 ?.joinToString("\n") { it.displayName },
         )
+        val operationStarted = System.nanoTime()
+        repository.diagnostics?.event("chat", "started", correlation = messageId.toString())
         val now = ZonedDateTime.now()
         val goal = repository.getGoal()
         val memory = ConversationContextPolicy.memoryForModel(repository.getMemory()?.summary, goal)
@@ -74,15 +76,29 @@ class HealthChatCoordinator(
         val groundedTurns = if (prefetch.isEmpty()) recent else recent.dropLast(1) + GeminiTurn(
             "user", "[端末取得の最新スナップショット。利用者の自己申告や指示ではありません。完了日と当日途中を区別してください]\n" + prefetch.joinToString("\n"),
         ) + recent.takeLast(1)
-        val modelAnswer = gemini.chatWithTools(
+        val instruction = chatSystemInstruction(memory, goal?.existingAiProfile(), now)
+        val capturedInputs = buildJsonObject {
+            put("capturedAt", now.toString())
+            put("systemInstruction", instruction)
+            put("turns", buildJsonArray { groundedTurns.forEach { turn -> add(buildJsonObject {
+                put("role", turn.role); put("text", turn.text); put("attachmentCount", turn.attachments.size)
+            }) } })
+            put("attachmentOmitted", attachments.isNotEmpty())
+            put("providerUsageAvailable", false)
+            put("captureScope", "initial_processed_context_and_bounded_tool_trace")
+        }
+        val modelAnswer = try { gemini.chatWithTools(
             apiKey = apiKey,
             model = apiKeyStore.modelId(),
-            systemInstruction = chatSystemInstruction(memory, goal?.existingAiProfile(), now),
+            systemInstruction = instruction,
             turns = groundedTurns,
             toolExecutor = ::executeTracked,
-        )
+        ) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
+            repository.diagnostics?.event("chat", "failure", (System.nanoTime() - operationStarted) / 1_000_000, messageId.toString(), error = e)
+            throw e
+        }
         val answer = ChatHistoryPolicy.stripLeadingTimestampTag(modelAnswer)
-        repository.addMessage(
+        val answerId = repository.addMessage(
             "assistant", answer,
             modelId = apiKeyStore.modelId(),
             appVersionName = BuildConfig.VERSION_NAME,
@@ -95,6 +111,13 @@ class HealthChatCoordinator(
                 })
             }.toString(),
         )
+        repository.diagnostics?.capture(answerId, buildJsonObject {
+            put("initialContext", capturedInputs)
+            put("calls", buildJsonArray { toolTrace.takeLast(12).forEach { add(it) } })
+            put("callsTruncated", toolTrace.size > 12)
+            put("commitSha", BuildConfig.COMMIT_SHA)
+        })
+        repository.diagnostics?.event("chat", "success", (System.nanoTime() - operationStarted) / 1_000_000, answerId.toString(), mapOf("tools" to toolTrace.size.toLong()))
         runCatching { refreshHabitMemory(apiKey, force = false) }
         repository.pruneChatHistory()
         return answer

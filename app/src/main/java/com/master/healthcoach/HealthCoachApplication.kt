@@ -9,6 +9,7 @@ import com.master.healthcoach.data.llm.HealthChatCoordinator
 import com.master.healthcoach.data.security.SecureApiKeyStore
 import com.master.healthcoach.work.SyncScheduler
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.*
 
 class HealthCoachApplication : Application() {
     lateinit var container: AppContainer
@@ -18,6 +19,7 @@ class HealthCoachApplication : Application() {
         super.onCreate()
         container = AppContainer(this)
         SyncScheduler.schedule(this)
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { runCatching { container.diagnostics.prune() } }
     }
 }
 
@@ -29,7 +31,9 @@ class AppContainer(application: Application) {
     }
     val database = HealthCoachDatabase.create(application)
     val gateway = HealthConnectGateway(application)
-    val repository = HealthRepository(database, gateway, json)
+    val diagnostics = com.master.healthcoach.data.diagnostics.DiagnosticsStore(application, database.dao())
+    val tunnelSettings = com.master.healthcoach.data.mcp.TunnelSettings(application)
+    val repository = HealthRepository(database, gateway, json, diagnostics)
     val apiKeyStore = SecureApiKeyStore(application)
     val geminiClient = GeminiClient(json)
     val chatCoordinator = HealthChatCoordinator(repository, geminiClient, apiKeyStore, json)
