@@ -1,5 +1,7 @@
 package com.master.healthcoach.data.llm
 
+import com.master.healthcoach.domain.NutritionDetailPolicy
+
 import com.master.healthcoach.data.HealthRepository
 import com.master.healthcoach.domain.EnergyModel
 import com.master.healthcoach.domain.NutritionMacros
@@ -396,14 +398,16 @@ class HealthQueryService(
             put("measurementDays", measured.size)
             put("confirmedCompleteDays", items.count { it.intakeCaloriesKcal != null && it.nutritionComplete })
             put("nutritionRecordCount", meals.size)
-            number("totalMealCount", meals.count { !it.isDailyRecord && it.mealType in 1..4 }.takeIf { it > 0 })
+            number("totalMealCount", NutritionDetailPolicy.recordedMealCount(meals.map { it.isDailyRecord to it.mealType }))
             put("dailyRecordCount", meals.count { it.isDailyRecord })
+            put("mealTimingAvailable", false)
+            put("mealDetailLimitation", NutritionDetailPolicy.LIMITATION)
             put("coverageNote", "記録の存在は全食記録済みの証明ではありません。日次形式や種別不明から食事回数は推定しません")
             put(
                 "sourceNote",
                 "あすけんからHealth Connectへ書き出されるのは摂取カロリー・たんぱく質・脂質・炭水化物。" +
                     "欠測日は0kcalとせず、未記録として扱う。" +
-                    "食事回数はNutritionRecordのstart/endが近いレコードを1食にまとめて数える。" +
+                    NutritionDetailPolicy.LIMITATION +
                     "参考収支は摂取−基礎代謝−活動消費を、歩数・記録運動モデルとデバイス値の比較レンジで計算。" +
                     "参考値で、摂取量や赤字量の指示・減量成否の判定には使わない。" +
                     "PFCエネルギー比は記録グラム×4/9/4kcalを摂取カロリーで割った参考値。",
@@ -460,8 +464,14 @@ class HealthQueryService(
                     add(buildJsonObject {
                         put("date", meal.date)
                         put("relativeDay", relativeDay(meal.date))
-                        put("startTimeLocal", formatEpochLocalTime(meal.startEpochMillis))
-                        put("startEpochMillis", meal.startEpochMillis)
+                        val typed = NutritionDetailPolicy.hasMealType(meal.isDailyRecord, meal.mealType)
+                        put("startTimeLocal", if (typed) JsonPrimitive(formatEpochLocalTime(meal.startEpochMillis)) else JsonNull)
+                        put("startEpochMillis", if (typed) JsonPrimitive(meal.startEpochMillis) else JsonNull)
+                        put("mealTimeLocal", JsonNull)
+                        put("mealType", if (typed) JsonPrimitive(meal.mealType) else JsonNull)
+                        put("recordStartEpochMillis", meal.startEpochMillis)
+                        put("timeInterpretation", "record_interval_not_verified_eating_time")
+                        put("detailStatus", if (meal.isDailyRecord) "daily_summary" else if (typed) "typed_meal_record" else "unknown")
                         put("mealLabel", meal.mealLabel)
                         put("isDailyRecord", meal.isDailyRecord)
                         number("intakeCaloriesKcal", meal.intakeCaloriesKcal)

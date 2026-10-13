@@ -1,5 +1,7 @@
 package com.master.healthcoach.ui
 
+import com.master.healthcoach.domain.NutritionDetailPolicy
+
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -519,7 +521,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        item { SectionHeader("食事・栄養", "NutritionRecordのstart/endが近いものを1食にまとめ、PFCを確認") }
+        item { SectionHeader("食事・栄養", "日次の摂取量・PFCを確認。食事時刻・区分は現在未取得") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
@@ -531,10 +533,9 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
                 MetricCard(
                     "食事回数",
-                    todayMeals.count { !it.isDailyRecord && it.mealType in 1..4 }.takeIf { it > 0 }?.let { "$it 回" }
-                        ?: todayDaily?.mealCount?.takeIf { it > 0 }?.let { "$it 回" }
+                    NutritionDetailPolicy.recordedMealCount(todayMeals.map { it.isDailyRecord to it.mealType })?.let { "$it 回" }
                         ?: "未取得",
-                    "start/endクラスタ",
+                    "区分付き記録のみ・全食数は未確認",
                     Modifier.weight(1f),
                 )
             }
@@ -577,8 +578,8 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         if (todayMeals.isEmpty()) {
             item {
                 EmptyCard(
-                    "今日の食事クラスタはありません",
-                    "あすけんの栄養レコードがHealth Connectへ届くと、start/endから食事回数とPFCを表示します",
+                    "今日の栄養記録はありません",
+                    "あすけんから連携された日次の摂取カロリー・PFCを表示します。食事時刻・区分・回数は未取得です",
                 )
             }
         } else {
@@ -1080,7 +1081,8 @@ private fun TrendsScreen(state: MainUiState) {
                         "食事回数",
                         "回",
                         dates.map { date ->
-                            val count = dailyByDate[date.toString()]?.mealCount?.takeIf { it > 0 }
+                            val day = dailyByDate[date.toString()]
+                            val count = day?.mealCount?.takeIf { it > 0 && day.nutritionRecordStatus == "meal_records_unverified" }
                             TrendPoint(
                                 date,
                                 count?.takeIf { it > 0 }?.toDouble(),
@@ -1566,7 +1568,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                                 mainValue = report.mealCountDailyAverage?.let {
                                     "${DecimalFormat("0.0").format(it)} 回/日"
                                 } ?: "未取得",
-                                subValue = "start/endクラスタ",
+                                subValue = "区分付き記録のみ・全食数は未確認",
                                 modifier = Modifier.weight(1f),
                             )
                             ReportTile(
@@ -2316,9 +2318,9 @@ private fun MealPfcChartCard(meals: List<NutritionMealEntity>) {
             Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("食事ごとのPFC", fontWeight = FontWeight.SemiBold)
+            Text(if (meals.all { it.isDailyRecord }) "日次記録のPFC" else "栄養記録のPFC", fontWeight = FontWeight.SemiBold)
             Text(
-                "start/endが近いレコードを1食にまとめます。mealTypeが違う朝昼夕は別食として扱います",
+                "日次記録は1食として扱いません。食事時刻・区分・回数がない記録からは推測しません",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2362,8 +2364,8 @@ private fun MealPfcRow(meal: NutritionMealEntity) {
                 Column(Modifier.weight(1f)) {
                     Text(meal.mealLabel, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "${formatClock(meal.startEpochMillis)}〜${formatClock(meal.endEpochMillis)}" +
-                            if (meal.recordCount > 1) " ・${meal.recordCount}件" else "",
+                        NutritionDetailPolicy.timeLabel(meal.isDailyRecord, meal.mealType,
+                            "${formatClock(meal.startEpochMillis)}〜${formatClock(meal.endEpochMillis)}"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
