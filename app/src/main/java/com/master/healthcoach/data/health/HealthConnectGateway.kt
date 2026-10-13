@@ -242,7 +242,7 @@ class HealthConnectGateway(private val context: Context) {
                     sample.time >= sleep.startTime && sample.time <= sleep.endTime
                 }
             }.orEmpty()
-            val result = aggregateDaily(
+            val (result, otherResult) = aggregateDaily(
                 start = dayStart,
                 end = dayEnd,
                 includeHeartRate = canReadHeartRate,
@@ -280,6 +280,9 @@ class HealthConnectGateway(private val context: Context) {
                 exercises.none { sample.time >= it.startTime && sample.time < it.endTime }
             }
             val originsByMetric = buildJsonObject {
+                put("wearableSourcePolicy", "xiaomi_only_v1")
+                put("selectedWearableOrigin", WearableSourcePolicy.PACKAGE)
+                put("missingWearableBehavior", "null; never substitute other sources")
                 fun candidates(name: String, origins: List<String>) {
                     put(name, buildJsonArray { origins.distinct().sorted().forEach { add(JsonPrimitive(it)) } })
                 }
@@ -289,7 +292,7 @@ class HealthConnectGateway(private val context: Context) {
                 candidates("heartRateCandidates", dayHeartRecords.map { it.metadata.dataOrigin.packageName })
                 candidates("nutritionCandidates", dayNutrition.map { it.metadata.dataOrigin.packageName })
                 mainSleep?.let { put("selectedSleepOrigin", it.metadata.dataOrigin.packageName) }
-                put("activitySelection", "Health Connect aggregate priority; candidates are not proof of selected contributions")
+                put("activitySelection", "Xiaomi Mi Fitness only (com.xiaomi.wearable); no fallback to phone or Fitbit")
             }.toString()
             val origins = buildList {
                 addAll(sessions.map { it.metadata.dataOrigin.packageName })
@@ -347,13 +350,13 @@ class HealthConnectGateway(private val context: Context) {
                 heartRateMinimumBpm = result[HeartRateRecord.BPM_MIN],
                 heartRateMaximumBpm = result[HeartRateRecord.BPM_MAX],
                 heartRateMeasurementCount = result[HeartRateRecord.MEASUREMENTS_COUNT],
-                basalCaloriesKcal = result[
+                basalCaloriesKcal = result.get(
                     BasalMetabolicRateRecord.BASAL_CALORIES_TOTAL
-                ]?.inKilocalories,
-                intakeCaloriesKcal = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.energy?.inKilocalories }, result[NutritionRecord.ENERGY_TOTAL]?.inKilocalories),
-                proteinGrams = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.protein?.inGrams }, result[NutritionRecord.PROTEIN_TOTAL]?.inGrams),
-                totalFatGrams = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.totalFat?.inGrams }, result[NutritionRecord.TOTAL_FAT_TOTAL]?.inGrams),
-                carbohydrateGrams = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.totalCarbohydrate?.inGrams }, result[NutritionRecord.TOTAL_CARBOHYDRATE_TOTAL]?.inGrams),
+                )?.inKilocalories,
+                intakeCaloriesKcal = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.energy?.inKilocalories }, otherResult?.get(NutritionRecord.ENERGY_TOTAL)?.inKilocalories),
+                proteinGrams = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.protein?.inGrams }, otherResult?.get(NutritionRecord.PROTEIN_TOTAL)?.inGrams),
+                totalFatGrams = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.totalFat?.inGrams }, otherResult?.get(NutritionRecord.TOTAL_FAT_TOTAL)?.inGrams),
+                carbohydrateGrams = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.totalCarbohydrate?.inGrams }, otherResult?.get(NutritionRecord.TOTAL_CARBOHYDRATE_TOTAL)?.inGrams),
                 mealCount = mealsByDate[date.toString()]?.count { !it.isDailyTotal && it.mealType in 1..4 } ?: 0,
                 nutritionRecordStatus = when {
                     dayNutrition.isEmpty() -> "no_records"
@@ -533,7 +536,7 @@ class HealthConnectGateway(private val context: Context) {
         includeBasalRate: Boolean,
         includeIntensity: Boolean,
         includeNutrition: Boolean,
-    ): AggregationResult {
+    ): Pair<AggregationResult, AggregationResult?> {
         val metrics = buildSet<AggregateMetric<*>> {
             add(StepsRecord.COUNT_TOTAL)
             add(DistanceRecord.DISTANCE_TOTAL)
@@ -544,13 +547,13 @@ class HealthConnectGateway(private val context: Context) {
                 add(HeartRateRecord.BPM_MAX)
                 add(HeartRateRecord.MEASUREMENTS_COUNT)
             }
-            if (includeBasalRate) {
-                add(BasalMetabolicRateRecord.BASAL_CALORIES_TOTAL)
-            }
+            if (includeBasalRate) add(BasalMetabolicRateRecord.BASAL_CALORIES_TOTAL)
             if (includeIntensity) {
                 add(ActivityIntensityRecord.MODERATE_DURATION_TOTAL)
                 add(ActivityIntensityRecord.VIGOROUS_DURATION_TOTAL)
             }
+        }
+        val otherMetrics = buildSet<AggregateMetric<*>> {
             if (includeNutrition) {
                 add(NutritionRecord.ENERGY_TOTAL)
                 add(NutritionRecord.PROTEIN_TOTAL)
@@ -558,12 +561,20 @@ class HealthConnectGateway(private val context: Context) {
                 add(NutritionRecord.TOTAL_CARBOHYDRATE_TOTAL)
             }
         }
-        return client.aggregate(
+        val wearable = client.aggregate(
             AggregateRequest(
                 metrics = metrics,
                 timeRangeFilter = TimeRangeFilter.between(start, end),
+                dataOriginFilter = WearableSourcePolicy.origins,
             ),
         )
+        val other = if (otherMetrics.isEmpty()) null else client.aggregate(
+            AggregateRequest(
+                metrics = otherMetrics,
+                timeRangeFilter = TimeRangeFilter.between(start, end),
+            ),
+        )
+        return wearable to other
     }
 
     private suspend inline fun <reified T : Record> readIfGranted(
@@ -582,6 +593,7 @@ class HealthConnectGateway(private val context: Context) {
             val response = client.readRecords(
                 ReadRecordsRequest(
                     recordType = T::class,
+                    dataOriginFilter = WearableSourcePolicy.originsFor(T::class),
                     timeRangeFilter = TimeRangeFilter.between(start, end),
                     pageSize = 1000,
                     pageToken = pageToken,

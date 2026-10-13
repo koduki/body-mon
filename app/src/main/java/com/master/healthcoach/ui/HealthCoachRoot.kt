@@ -449,7 +449,8 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
             }
         }
-        item { SectionHeader("活動", "今日0時から現在までの記録値") }
+        item { SectionHeader("活動", if (todayDaily?.metricOriginsJson?.contains("xiaomi_only_v1") == true)
+            "Mi Fitnessのみ・未連携の項目は未取得" else "取得元の限定を反映するには同期してください") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
