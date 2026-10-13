@@ -19,7 +19,7 @@ class DiagnosticsStore(context: Context, private val dao: HealthCoachDao) {
         get() = prefs.getBoolean("detailed", false)
         set(value) { prefs.edit().putBoolean("detailed", value).commit() }
 
-    suspend fun event(category: String, outcome: String, durationMs: Long = 0, correlation: String = "", counters: Map<String, Long> = emptyMap()) {
+    suspend fun event(category: String, outcome: String, durationMs: Long = 0, correlation: String = "", counters: Map<String, Long> = emptyMap(), error: Throwable? = null) {
         if (!enabled) return
         require(category in CATEGORIES && outcome in OUTCOMES)
         require(counters.keys.all { it in COUNTERS })
@@ -27,7 +27,23 @@ class DiagnosticsStore(context: Context, private val dao: HealthCoachDao) {
         try {
             dao.insertEvent(AppEventEntity(timestamp = System.currentTimeMillis(), category = category, outcome = outcome,
                 durationMs = durationMs.coerceAtLeast(0), correlationId = safeCorrelation,
-                attributesJson = buildJsonObject { counters.forEach { (k, v) -> put(k, v) } }.toString(),
+                attributesJson = buildJsonObject {
+                    counters.forEach { (k, v) -> put(k, v) }
+                    if (error != null) {
+                        put("errorKind", when (error) {
+                            is SecurityException -> "permission"
+                            is java.io.IOException -> "io"
+                            is IllegalArgumentException -> "validation"
+                            else -> "internal"
+                        })
+                        put("appFrames", buildJsonArray {
+                            error.stackTrace.filter { it.className.startsWith("com.master.healthcoach.") }.take(8).forEach { frame ->
+                                val symbol = frame.className + "." + frame.methodName
+                                if (symbol.matches(Regex("[A-Za-z0-9_.$<>-]{1,220}"))) add(JsonPrimitive(symbol + ":" + frame.lineNumber))
+                            }
+                        })
+                    }
+                }.toString(),
                 appVersion = BuildConfig.VERSION_NAME, commitSha = BuildConfig.COMMIT_SHA))
             dao.pruneEvents(System.currentTimeMillis() - 14 * DAY)
         } catch (e: CancellationException) { throw e } catch (_: Exception) { /* telemetry must not break health operations */ }
@@ -45,6 +61,11 @@ class DiagnosticsStore(context: Context, private val dao: HealthCoachDao) {
         dao.pruneEvidence(System.currentTimeMillis() - 7 * DAY)
         val item = dao.evidence(messageId) ?: return null
         return runCatching { Json.parseToJsonElement(crypto.decrypt(item.encryptedPayload)) }.getOrNull()
+    }
+    suspend fun prune() {
+        dao.pruneEvents(System.currentTimeMillis() - 14 * DAY)
+        dao.pruneEvidence(System.currentTimeMillis() - 7 * DAY)
+        dao.pruneReports(System.currentTimeMillis() - 90 * DAY)
     }
     suspend fun clear() { dao.clearEvents(); dao.clearEvidence() }
     companion object {

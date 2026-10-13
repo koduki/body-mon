@@ -94,7 +94,7 @@ class HealthChatCoordinator(
             turns = groundedTurns,
             toolExecutor = ::executeTracked,
         ) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-            repository.diagnostics?.event("chat", "failure", (System.nanoTime() - operationStarted) / 1_000_000, messageId.toString())
+            repository.diagnostics?.event("chat", "failure", (System.nanoTime() - operationStarted) / 1_000_000, messageId.toString(), error = e)
             throw e
         }
         val answer = ChatHistoryPolicy.stripLeadingTimestampTag(modelAnswer)

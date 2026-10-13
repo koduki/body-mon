@@ -152,6 +152,11 @@ fun HealthCoachRoot(
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(AppTab.TODAY) }
     val snackbar = remember { SnackbarHostState() }
+    val diagnosticContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    LaunchedEffect(selectedTab) {
+        (diagnosticContext as? com.master.healthcoach.HealthCoachApplication)?.container?.diagnostics
+            ?.event("ui_tab", "success", counters = mapOf("tab" to selectedTab.ordinal.toLong()))
+    }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -199,7 +204,7 @@ fun HealthCoachRoot(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (!state.hasCorePermissions) {
+            if (!state.hasCorePermissions && selectedTab != AppTab.SETTINGS) {
                 PermissionScreen(state, onRequestPermissions, onOpenHealthConnect)
             } else {
                 when (selectedTab) {

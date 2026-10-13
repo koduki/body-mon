@@ -13,6 +13,7 @@ import com.master.healthcoach.MainActivity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import java.util.concurrent.atomic.AtomicBoolean
 
  data class TunnelState(val status: String = "stopped", val expiresAt: Long = 0) {
@@ -121,6 +122,10 @@ class TunnelService : Service() {
             if (state.value.running) return
             try { ContextCompat.startForegroundService(context, Intent(context, TunnelService::class.java).setAction(START)) }
             catch (_: Exception) { mutableState.value = TunnelState("start_failed") }
+        }
+        suspend fun stopAndAwait(context: Context) {
+            stop(context)
+            withTimeout(5_000) { state.first { !it.running } }
         }
         fun stop(context: Context) {
             accepting.set(false)

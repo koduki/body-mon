@@ -41,7 +41,7 @@ class HealthMcpBackend(
             val start = from.atStartOfDay(zone).toInstant().toEpochMilli()
             val end = to.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
             val limit = number(args, "limit", 50, 1, 100)
-            val fingerprint = digest(name + JsonObject(args.filterKeys { it != "cursor" }).toString())
+            val fingerprint = digest(name + JsonObject(args.filterKeys { it != "cursor" }.toSortedMap()).toString())
             val cursor = decodeCursor(args.string("cursor"), revision, fingerprint)
             var next: String? = null
             var effectiveFrom = from.toString()
@@ -163,11 +163,17 @@ class HealthMcpBackend(
                 }
                 else -> throw McpFailure("UNKNOWN_TOOL")
             }
+            val periodFiltered = name in setOf("get_health_metrics", "get_data_quality", "list_weekly_reports", "search_conversations", "get_app_diagnostics", "list_app_events")
+            if (name == "get_weekly_report") {
+                val snapshot = (data as? JsonObject)?.get("snapshot") as? JsonObject
+                effectiveFrom = snapshot?.string("weekStart").orEmpty()
+                effectiveTo = snapshot?.string("weekEnd").orEmpty()
+            }
             buildJsonObject {
                 put("schemaVersion", 1); put("generatedAt", Instant.now().toString()); put("timeZone", zone.id)
                 put("dataRevision", revision); put("snapshotId", revision + ":" + fingerprint)
-                put("requestedPeriod", buildJsonObject { put("from", from.toString()); put("to", to.toString()) })
-                put("effectivePeriod", buildJsonObject { put("from", effectiveFrom); put("to", effectiveTo) })
+                put("requestedPeriod", if (periodFiltered) buildJsonObject { put("from", from.toString()); put("to", to.toString()) } else JsonNull)
+                put("effectivePeriod", if (periodFiltered || name == "get_weekly_report") buildJsonObject { put("from", effectiveFrom); put("to", effectiveTo) } else JsonNull)
                 put("lastSyncSuccessEpochMillis", dao.metadata("lastSyncSuccess")?.toLongOrNull()?.let(::JsonPrimitive) ?: JsonNull)
                 put("lastSyncOutcome", dao.metadata("lastSyncOutcome")?.let(::JsonPrimitive) ?: JsonNull)
                 put("todayIsPartial", true); put("data", data)

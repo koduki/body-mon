@@ -10,6 +10,7 @@ object McpProtocol {
     const val MAX_BYTES = 256 * 1024
     suspend fun dispatch(request: JsonObject, tools: () -> JsonArray, execute: suspend (String, JsonObject) -> JsonElement): JsonObject? {
         val id = request["id"]
+        if (id != null && id !is JsonPrimitive) return error(null, -32600, "Invalid Request")
         if ((request["jsonrpc"] as? JsonPrimitive)?.contentOrNull != "2.0") return error(id, -32600, "Invalid Request")
         val method = (request["method"] as? JsonPrimitive)?.contentOrNull ?: return error(id, -32600, "Invalid Request")
         if (id == null) return null // notifications never receive JSON-RPC responses
@@ -45,7 +46,8 @@ object McpProtocol {
                 }
                 else -> return error(id, -32601, "Method not found")
             }
-            buildJsonObject { put("jsonrpc", "2.0"); put("id", id); put("result", result) }
+            val response = buildJsonObject { put("jsonrpc", "2.0"); put("id", id); put("result", result) }
+            if (response.toString().toByteArray().size > MAX_BYTES - 2048) error(id, -32603, "RESULT_TOO_LARGE_REDUCE_RANGE") else response
         } catch (e: CancellationException) { throw e
         } catch (_: IllegalArgumentException) { error(id, -32602, "Invalid params")
         } catch (_: Exception) { error(id, -32603, "Internal error") }

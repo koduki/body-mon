@@ -34,6 +34,17 @@ class TunnelTransportTest {
             assertFalse(body.containsKey("shard_token"))
         }
     }
+    @Test fun `cancellation closes a stalled poll body promptly`() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("{\"commands\":[]}").setBodyDelay(3, java.util.concurrent.TimeUnit.SECONDS))
+            server.start()
+            val transport = TunnelTransport(config, { true }, { null }, {}, baseUrl = server.url("/").toString().trimEnd('/'), allowLocalTestServer = true)
+            val job = launch(Dispatchers.Default) { transport.run() }
+            withContext(Dispatchers.IO) { assertNotNull(server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS)) }
+            withTimeout(1000) { job.cancelAndJoin() }
+            assertTrue(job.isCancelled)
+        }
+    }
     @Test fun `expired command is never dispatched or posted`() = runBlocking {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("{\"commands\":[${command("0s")}]}") )

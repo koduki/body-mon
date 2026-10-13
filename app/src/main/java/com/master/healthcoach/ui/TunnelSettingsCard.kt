@@ -86,7 +86,7 @@ fun TunnelSettingsCard() {
             ShareRow("処理時間・結果・操作種別を記録", capture, true) { capture = it; container.diagnostics.enabled = it }
             ShareRow("回答時の入力文脈を詳細記録（健康情報・会話を含む）", detailed, capture) { detailed = it; container.diagnostics.detailed = it }
             Text("通常の診断に会話本文やキーは記録しません。詳細入力は暗号化し最大7日保持します。停止すると新しい記録を作成しません。")
-            TextButton(onClick = { scope.launch { TunnelService.stop(context); container.diagnostics.clear(); message = "診断記録を削除しました" } }) { Text("診断記録を削除") }
+            TextButton(onClick = { scope.launch { runCatching { TunnelService.stopAndAwait(context); container.diagnostics.clear() }.onSuccess { message = "診断記録を削除しました" }.onFailure { message = "接続停止後にもう一度削除してください" } } }) { Text("診断記録を削除") }
             if (message.isNotEmpty()) Text(message)
         }
     }

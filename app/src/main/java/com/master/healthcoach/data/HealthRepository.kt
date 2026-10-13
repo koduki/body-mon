@@ -75,7 +75,7 @@ class HealthRepository(
         } catch (e: CancellationException) { throw e
         } catch (e: Exception) {
             dao.setMetadata(AppMetadataEntity("lastSyncOutcome", "failure"))
-            diagnostics?.event("sync", "failure", (System.nanoTime() - started) / 1_000_000, runId)
+            diagnostics?.event("sync", "failure", (System.nanoTime() - started) / 1_000_000, runId, error = e)
             throw e
         }
     }

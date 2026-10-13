@@ -214,3 +214,21 @@ ChatGPTの改善提案には、現象、対象版、観測証拠のID、再現�
 - [Android Foreground service types](https://developer.android.com/develop/background-work/services/fgs/service-types)
 - [Android Foreground service timeouts](https://developer.android.com/develop/background-work/services/fgs/timeout)
 - [Health Connect read data](https://developer.android.com/health-and-fitness/health-connect/read-data)
+
+## 実装メモ（2026-10-13）
+
+このブランチにKotlinトンネル、12個の読取ツール、時間制限付きdataSyncサービス、設定UI、Room v10 migrationを実装した。
+健康・会話・診断の実データを使う接続は、最初の固定値PoCと同じ通信経路を使用する。
+テストではMockWebServerに対してpoll/response、認証失敗、期限切れ、重複と停止を検証する。実OpenAIトンネルとの相互接続・実機電池測定は別途必要。
+
+実装上の具体化:
+
+- health metricsは1ページ最大7日（要求期間は最大90日）。各ページの集計対象をeffectivePeriodで示す。
+- 会話は本文4000文字、根拠JSONは16000文字ごとに続きを取得する。集計が大きすぎる場合は範囲を縮めるエラーを返す。
+- 週報根拠は最大50件・90日、1件の入力は160KB以下。上限超過では既存週報キャッシュを維持し、根拠アーカイブを生成しない。
+- 詳細な回答入力は初期の加工済みテキスト文脈と最大12件のツール結果を対象とする。Geminiの全中間ラウンド、添付本体、内部思考は含まない。
+- 詳細入力は最大40件・7日・1件320KB以下、暗号化保存。サイズ超過はpromptAvailable=falseになる。会話削除に追従して消去する。
+- 例外は固定分類と自アプリのスタックsymbolだけを記録する。自由な例外メッセージ、他アプリのログ、OS全体のクラッシュ情報は収集しない。
+- UI計測はタブ選択・同期開始・目標保存。画面録画や詳細な操作リプレイは行わない。
+- データ不足の診断に使えるよう、Health Connectの主要権限がなくても設定タブを開ける。
+- トンネル切断時の電池残量差は端末全体の変化。単独アプリの消費率として表示しない。

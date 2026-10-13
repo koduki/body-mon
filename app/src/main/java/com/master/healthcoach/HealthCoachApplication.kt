@@ -9,6 +9,7 @@ import com.master.healthcoach.data.llm.HealthChatCoordinator
 import com.master.healthcoach.data.security.SecureApiKeyStore
 import com.master.healthcoach.work.SyncScheduler
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.*
 
 class HealthCoachApplication : Application() {
     lateinit var container: AppContainer
@@ -18,6 +19,7 @@ class HealthCoachApplication : Application() {
         super.onCreate()
         container = AppContainer(this)
         SyncScheduler.schedule(this)
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { runCatching { container.diagnostics.prune() } }
     }
 }
 

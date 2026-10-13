@@ -133,24 +133,27 @@ class TunnelTransport(
         if (config.organization.isNotBlank()) builder.header("OpenAI-Organization", config.organization)
         if (shardToken != null) builder.header("X-Tunnel-Shard-Token", shardToken)
         if (body != null) { builder.post(body.toRequestBody("application/json".toMediaType())); counters.bytes += body.toByteArray().size }
-        val response = await(client.newCall(builder.build()))
-        val receivedAt = monotonicMs()
-        return withContext(Dispatchers.IO) {
-            response.use {
-                val source = it.body?.source()
-                if (source != null && source.request(1_048_577)) throw TunnelProtocolFailure()
-                val text = source?.readUtf8().orEmpty()
-                counters.bytes += text.toByteArray().size
-                WireResponse(it.code, text, it.header("Retry-After"), receivedAt)
-            }
-        }
+        return await(client.newCall(builder.build()))
     }
-    private suspend fun await(call: Call): Response = suspendCancellableCoroutine { continuation ->
+    // Keep cancellation attached to the Call until the entire bounded body is read.
+    private suspend fun await(call: Call): WireResponse = suspendCancellableCoroutine { continuation ->
         continuation.invokeOnCancellation { call.cancel() }
         call.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { if (continuation.isActive) continuation.resumeWithException(e) }
             override fun onResponse(call: Call, response: Response) {
-                if (continuation.isActive) continuation.resume(response) { _, value, _ -> value.close() } else response.close()
+                val receivedAt = monotonicMs()
+                try {
+                    val result = response.use {
+                        val source = it.body?.source()
+                        if (source != null && source.request(1_048_577)) throw TunnelProtocolFailure()
+                        val text = source?.readUtf8().orEmpty()
+                        synchronized(counters) { counters.bytes += text.toByteArray().size }
+                        WireResponse(it.code, text, it.header("Retry-After"), receivedAt)
+                    }
+                    if (continuation.isActive) continuation.resume(result)
+                } catch (e: Exception) {
+                    if (continuation.isActive) continuation.resumeWithException(e)
+                }
             }
         })
     }

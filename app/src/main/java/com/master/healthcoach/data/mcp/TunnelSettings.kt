@@ -35,7 +35,7 @@ class TunnelSettings(context: Context) {
         require(ID.matches(id.trim())) { "トンネルIDを確認してください" }
         require(minutes in setOf(15, 30, 60))
         require(organization.length <= 128 && !organization.any { it == '\r' || it == '\n' })
-        require(key.isNotBlank() || (hasKey() && id.trim() == id())) { "実行用キーを入力してください" }
+        require(key.isNotBlank() || (hasKey() && id.trim() == this.id())) { "実行用キーを入力してください" }
         val editor = prefs.edit().putString("id", id.trim()).putString("organization", organization.trim()).putInt("minutes", minutes)
             .putBoolean("health", permissions.health).putBoolean("conversations", permissions.conversations)
             .putBoolean("diagnostics", permissions.diagnostics).putBoolean("evidence", permissions.evidence && permissions.health && permissions.conversations)
