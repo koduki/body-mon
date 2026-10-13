@@ -1,5 +1,10 @@
 package com.master.healthcoach.ui
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
+import com.master.healthcoach.domain.MetricAvailability
+import com.master.healthcoach.domain.MetricAvailabilityPolicy
+
 import com.master.healthcoach.domain.NutritionDetailPolicy
 
 import android.net.Uri
@@ -205,6 +210,7 @@ fun HealthCoachRoot(
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
+        CompositionLocalProvider(LocalMetricAvailability provides MetricAvailabilityPolicy.inspect(state.daily, state.body, state.sources)) {
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (!state.hasCorePermissions && selectedTab != AppTab.SETTINGS) {
                 PermissionScreen(state, onRequestPermissions, onOpenHealthConnect)
@@ -232,6 +238,7 @@ fun HealthCoachRoot(
                     )
                 }
             }
+        }
         }
     }
 }
@@ -296,6 +303,7 @@ private fun PermissionScreen(
 
 @Composable
 private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
+    val showHeartRate = !hideEmptyMetric("心拍数", "未取得")
     val zoneId = ZoneId.systemDefault()
     val today = LocalDate.now(zoneId)
     val todayStr = today.toString()
@@ -349,6 +357,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 28.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        item { UnavailableMetricsNotice() }
         item {
             SectionHeader(
                 "今日の記録",
@@ -620,7 +629,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
             }
         }
-        item {
+        if (todayDaily?.heartRateAverageBpm != null || showHeartRate) item {
             Card(
                 colors = CardDefaults.cardColors(
                     containerColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -796,6 +805,7 @@ private fun TrendsScreen(state: MainUiState) {
                 contentPadding = PaddingValues(16.dp, 4.dp, 16.dp, 28.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                item { UnavailableMetricsNotice() }
                 item {
                     Row(
                         Modifier.fillMaxWidth(),
@@ -1138,6 +1148,7 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
         contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 28.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        item { UnavailableMetricsNotice() }
         item {
             SectionHeader(
                 "週次ボディメイクレビュー",
@@ -1652,9 +1663,10 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
                             report.activeCaloriesDailyAverage.kcal("/日")
                         }
                         Text(
-                            "基礎代謝 ${
-                                report.basalCaloriesDailyAverage.kcal("/日")
-                            }・活動消費 $activeText",
+                            listOfNotNull(
+                                report.basalCaloriesDailyAverage?.let { "基礎代謝 ${it.kcal("/日")}" },
+                                "活動消費 $activeText",
+                            ).joinToString("・"),
                         )
                         Text(
                             "上の「カロリー収支と体重の対照」で摂取との差を見ます。" +
@@ -1909,6 +1921,7 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        UnavailableMetricsNotice()
         SectionHeader("実機データ診断", "Mi Fitness、eufy、あすけんが実際に書いた項目と、栄養の書込粒度を確認します")
         state.sources.forEach { source ->
             Card {
@@ -2053,6 +2066,39 @@ private fun SettingsScreen(
     }
 }
 
+private val LocalMetricAvailability = staticCompositionLocalOf<List<MetricAvailability>> { emptyList() }
+
+@Composable
+private fun hideEmptyMetric(title: String, value: String): Boolean {
+    if (!value.contains("未取得") && !value.contains("未確認") && !value.contains("判定保留")) return false
+    val labels = when (title) {
+        "参考活動消費" -> listOf("歩数", "活動消費")
+        "推定収支", "消費合計", "換算体重変化" -> listOf("基礎代謝", "活動消費", "摂取カロリー")
+        else -> listOf(MetricAvailabilityPolicy.labelFor(title))
+    }
+    return LocalMetricAvailability.current.any { it.label in labels && it.hideEmptyMetric }
+}
+
+@Composable
+private fun UnavailableMetricsNotice() {
+    val limited = LocalMetricAvailability.current.filter { it.hideEmptyMetric }
+    if (limited.isEmpty()) {
+        if (LocalMetricAvailability.current.any { it.state == com.master.healthcoach.domain.MetricAvailabilityState.CHECKING }) {
+            Text("取得可否を確認中：30日分の同期後に、連携されていない項目を整理します。", style = MaterialTheme.typography.bodySmall)
+        }
+        return
+    }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("現在の連携で使えない項目", fontWeight = FontWeight.SemiBold)
+            limited.groupBy { it.reason }.forEach { (reason, items) ->
+                Text(items.joinToString("・") { it.label } + "：" + reason, style = MaterialTheme.typography.bodySmall)
+            }
+            Text("値が届けば通常表示に戻ります。詳しくは設定の実機データ診断を確認してください。", style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
 @Composable
 private fun SectionHeader(title: String, subtitle: String) {
     Column {
@@ -2069,6 +2115,7 @@ private fun MetricCard(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
 ) {
+    if (hideEmptyMetric(title, value)) return
     Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2095,6 +2142,7 @@ private fun TrendCard(
     overlayPoints: List<TrendPoint> = emptyList(),
     summary: String? = null,
 ) {
+    if (points.none { it.value != null } && hideEmptyMetric(title, "未取得")) return
     var selectedIndex by remember(points) { mutableStateOf<Int?>(null) }
     val measured = points.mapNotNull { it.value }
     val selected = selectedIndex?.let { points.getOrNull(it) }
@@ -2603,6 +2651,7 @@ private fun ReportTile(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
 ) {
+    if (hideEmptyMetric(title, mainValue)) return
     Card(modifier = modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
