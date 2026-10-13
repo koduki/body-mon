@@ -254,6 +254,20 @@ class GeminiClient(
                     ),
                 )
                 add(buildJsonObject {
+                    put("name", "update_profile")
+                    put("description", "このターンで利用者が自分の年齢・身長・性別を伝えたり訂正した場合、設定に保存します。最新の本人申告を優先。引用の他人の情報・推測・過去の発言だけでは呼びません。変更する項目だけ指定します")
+                    put("parameters", buildJsonObject {
+                        put("type", "object")
+                        put("properties", buildJsonObject {
+                            put("age", buildJsonObject { put("type", "integer"); put("description", "年齢13〜120歳") })
+                            put("heightCm", buildJsonObject { put("type", "number"); put("description", "身長100〜250cm") })
+                            put("sex", buildJsonObject { put("type", "string"); put("description", "本人の申告した性別") })
+                            put("evidence", buildJsonObject { put("type", "string"); put("description", "現在の利用者メッセージから本人申告をそのまま抜粋") })
+                        })
+                        put("required", buildJsonArray { add("evidence") })
+                    })
+                })
+                add(buildJsonObject {
                     put("name", "get_goal_progress")
                     put("description", "現在の目標と直近の進捗を取得します")
                 })

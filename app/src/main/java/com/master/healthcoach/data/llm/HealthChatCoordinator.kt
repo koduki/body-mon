@@ -57,7 +57,7 @@ class HealthChatCoordinator(
         )
         val toolTrace = mutableListOf<JsonObject>()
         suspend fun executeTracked(call: GeminiFunctionCall): JsonElement {
-            val result = tools.execute(call)
+            val result = tools.execute(call, userText)
             toolTrace += buildJsonObject {
                 put("name", call.name)
                 put("arguments", call.arguments)

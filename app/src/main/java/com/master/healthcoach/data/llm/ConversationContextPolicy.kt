@@ -2,9 +2,9 @@ package com.master.healthcoach.data.llm
 
 import com.master.healthcoach.data.db.GoalEntity
 
-/** Settings are explicit data; pasted reference prose and previous advice are not profile edits. */
+/** Settings also persist the latest profile stated in conversation. */
 internal object ConversationContextPolicy {
-    const val VERSION = "2026-10-13-evidence-v2"
+    const val VERSION = "2026-10-13-evidence-v3"
     private val legacyReview = Regex("(?m)^専門家ビュー（端末内KPI判定）")
     private val age = Regex("(\\d{1,3})\\s*歳")
     private val height = Regex("(\\d{2,3}(?:\\.\\d+)?)\\s*cm", RegexOption.IGNORE_CASE)
@@ -16,7 +16,7 @@ internal object ConversationContextPolicy {
         if (goal == null || memory.isNullOrBlank()) return@buildList
         val heights = height.findAll(memory).map { it.groupValues[1].toDouble() }.toSet()
         if (goal.heightCm != null && heights.any { kotlin.math.abs(it - goal.heightCm) > 0.1 }) {
-            add("身長が設定とメモリーで異なります。設定は${goal.heightCm}cm。引用文章の数値を本人情報として採用しません")
+            add("身長が設定とメモリーで異なります。設定は${goal.heightCm}cm。最新の本人申告は会話または設定で修正できます")
         }
         val ages = age.findAll(memory).map { it.groupValues[1].toInt() }.toSet()
         if (goal.age != null && ages.any { it != goal.age }) {
