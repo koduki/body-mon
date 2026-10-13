@@ -333,7 +333,7 @@ object WeeklyReportBuilder {
             ),
             mealCountDailyAverage = averageDouble(
                 currentDaily.mapNotNull { day ->
-                    day.mealCount.takeIf { it > 0 }?.toDouble()
+                    day.mealCount.takeIf { it > 0 && day.nutritionRecordStatus == "meal_records_unverified" }?.toDouble()
                 },
             ),
             referenceActiveStepModelDailyAverage = activeSummary?.stepModelDailyAverageKcal,
