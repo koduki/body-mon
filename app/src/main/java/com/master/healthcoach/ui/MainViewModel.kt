@@ -134,6 +134,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun sync() {
         if (transient.value.isSyncing) return
         viewModelScope.launch {
+            container.diagnostics.event("ui_sync", "started")
             update { it.copy(isSyncing = true, message = null) }
             runCatching { repository.sync() }
                 .onSuccess { update { it.copy(message = "Health Connectを更新しました") } }
@@ -276,6 +277,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun clearLocalData() {
         viewModelScope.launch {
             runCatching {
+                com.master.healthcoach.data.mcp.TunnelService.stop(getApplication())
+                container.tunnelSettings.clear()
                 repository.clearAll()
                 container.apiKeyStore.clear()
             }.onSuccess {

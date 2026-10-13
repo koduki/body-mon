@@ -22,6 +22,7 @@ android {
             }.getOrElse(1)
         versionName = providers.environmentVariable("APP_VERSION_NAME").getOrElse("0.1.0")
 
+        buildConfigField("String", "COMMIT_SHA", "\"${providers.environmentVariable("GITHUB_SHA").getOrElse("local-unverified")}\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
@@ -95,6 +96,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")

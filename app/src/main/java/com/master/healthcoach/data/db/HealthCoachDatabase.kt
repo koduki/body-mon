@@ -18,8 +18,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WeeklyReportEntity::class,
         ChatMessageEntity::class,
         ConversationMemoryEntity::class,
+        AppEventEntity::class, ResponseEvidenceEntity::class, ReportArchiveEntity::class, AppMetadataEntity::class,
     ],
-    version = 9,
+    version = 10,
     exportSchema = false,
 )
 abstract class HealthCoachDatabase : RoomDatabase() {
@@ -40,7 +41,28 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 MIGRATION_6_7,
                 MIGRATION_7_8,
                 MIGRATION_8_9,
-            ).build()
+                MIGRATION_9_10,
+            ).addCallback(object : Callback() {
+                override fun onCreate(db: SupportSQLiteDatabase) { installRevisionTriggers(db) }
+            }).build()
+
+        internal val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS app_events (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, timestamp INTEGER NOT NULL, category TEXT NOT NULL, outcome TEXT NOT NULL, durationMs INTEGER NOT NULL, correlationId TEXT NOT NULL, attributesJson TEXT NOT NULL, appVersion TEXT NOT NULL, commitSha TEXT NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS response_evidence (messageId INTEGER NOT NULL PRIMARY KEY, timestamp INTEGER NOT NULL, encryptedPayload TEXT NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS report_archive (id TEXT NOT NULL PRIMARY KEY, periodStart TEXT NOT NULL, periodEnd TEXT NOT NULL, generatedAt INTEGER NOT NULL, revision INTEGER NOT NULL, policyVersion TEXT NOT NULL, commitSha TEXT NOT NULL, snapshotJson TEXT NOT NULL, inputsJson TEXT NOT NULL)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS app_metadata (`key` TEXT NOT NULL PRIMARY KEY, value TEXT NOT NULL)")
+                installRevisionTriggers(db)
+            }
+        }
+        private fun installRevisionTriggers(db: SupportSQLiteDatabase) {
+            db.execSQL("INSERT OR IGNORE INTO app_metadata (`key`, value) VALUES ('revision', '0')")
+            listOf("daily_health_summary", "body_composition_daily", "health_source_status", "exercise_sessions", "nutrition_meals", "goals", "weekly_reports", "chat_messages", "conversation_memory", "report_archive").forEach { table ->
+                listOf("INSERT", "UPDATE", "DELETE").forEach { operation ->
+                    db.execSQL("CREATE TRIGGER IF NOT EXISTS revision_${table}_$operation AFTER $operation ON $table BEGIN UPDATE app_metadata SET value = CAST(value AS INTEGER) + 1 WHERE `key` = 'revision'; END")
+                }
+            }
+        }
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {

@@ -158,3 +158,41 @@ data class ConversationMemoryEntity(
     val summarizedThroughMessageId: Long,
     val updatedAtEpochMillis: Long,
 )
+
+@Serializable
+@Entity(tableName = "app_events")
+data class AppEventEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timestamp: Long,
+    val category: String,
+    val outcome: String,
+    val durationMs: Long,
+    val correlationId: String,
+    val attributesJson: String,
+    val appVersion: String,
+    val commitSha: String,
+)
+
+@Entity(tableName = "response_evidence")
+data class ResponseEvidenceEntity(
+    @PrimaryKey val messageId: Long,
+    val timestamp: Long,
+    val encryptedPayload: String,
+)
+
+@Serializable
+@Entity(tableName = "report_archive")
+data class ReportArchiveEntity(
+    @PrimaryKey val id: String,
+    val periodStart: String,
+    val periodEnd: String,
+    val generatedAt: Long,
+    val revision: Long,
+    val policyVersion: String,
+    val commitSha: String,
+    val snapshotJson: String,
+    val inputsJson: String,
+)
+
+@Entity(tableName = "app_metadata")
+data class AppMetadataEntity(@PrimaryKey val key: String, val value: String)

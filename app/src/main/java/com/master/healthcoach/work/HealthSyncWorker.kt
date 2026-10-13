@@ -17,6 +17,8 @@ class HealthSyncWorker(
                 container.repository.hasBackgroundPermission()
             ) {
                 container.repository.sync()
+            } else {
+                container.diagnostics.event("sync", "skipped_permission")
             }
         }.fold(
             onSuccess = { Result.success() },
