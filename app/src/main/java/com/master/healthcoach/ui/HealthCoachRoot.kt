@@ -1,5 +1,8 @@
 package com.master.healthcoach.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.master.healthcoach.domain.MetricAvailability
@@ -37,6 +40,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.AttachFile
@@ -149,6 +153,7 @@ fun HealthCoachRoot(
     onSaveApiKey: (String, String) -> Unit,
     onClearApiKey: () -> Unit,
     onSendChat: (String) -> Unit,
+    onStopChat: () -> Unit = {},
     onAddChatAttachments: (List<Uri>) -> Unit,
     onRemoveChatAttachment: (String) -> Unit,
     onAnalyzeWeek: () -> Unit,
@@ -159,6 +164,8 @@ fun HealthCoachRoot(
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(AppTab.TODAY) }
     val snackbar = remember { SnackbarHostState() }
+    val tabStateHolder = rememberSaveableStateHolder()
+    BackHandler(enabled = selectedTab == AppTab.CHAT) { selectedTab = AppTab.TODAY }
     val diagnosticContext = androidx.compose.ui.platform.LocalContext.current.applicationContext
     LaunchedEffect(selectedTab) {
         (diagnosticContext as? com.master.healthcoach.HealthCoachApplication)?.container?.diagnostics
@@ -177,16 +184,23 @@ fun HealthCoachRoot(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Health Coach", fontWeight = FontWeight.SemiBold)
+                        Text(if (selectedTab == AppTab.CHAT) "健康コーチ" else "Health Coach", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "${selectedTab.label} · v${BuildConfig.VERSION_NAME}",
+                            if (selectedTab == AppTab.CHAT) "体の変化を一緒に確認" else "${selectedTab.label} · v${BuildConfig.VERSION_NAME}",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 },
+                navigationIcon = {
+                    if (selectedTab == AppTab.CHAT) IconButton(onClick = { selectedTab = AppTab.TODAY }) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "ホームへ戻る")
+                    }
+                },
                 actions = {
-                    IconButton(onClick = onSync, enabled = !state.isSyncing) {
+                    if (selectedTab == AppTab.CHAT) IconButton(onClick = { selectedTab = AppTab.SETTINGS }) {
+                        Icon(Icons.Default.Settings, contentDescription = "チャットの設定")
+                    } else IconButton(onClick = onSync, enabled = !state.isSyncing) {
                         if (state.isSyncing) {
                             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                         } else {
@@ -197,7 +211,7 @@ fun HealthCoachRoot(
             )
         },
         bottomBar = {
-            NavigationBar {
+            if (selectedTab != AppTab.CHAT) NavigationBar {
                 AppTab.entries.forEach { tab ->
                     NavigationBarItem(
                         selected = tab == selectedTab,
@@ -211,10 +225,11 @@ fun HealthCoachRoot(
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         CompositionLocalProvider(LocalMetricAvailability provides MetricAvailabilityPolicy.inspect(state.daily, state.body, state.sources)) {
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
             if (!state.hasCorePermissions && selectedTab != AppTab.SETTINGS) {
                 PermissionScreen(state, onRequestPermissions, onOpenHealthConnect)
             } else {
+                tabStateHolder.SaveableStateProvider(selectedTab.name) {
                 when (selectedTab) {
                     AppTab.TODAY -> DashboardScreen(state, onSync)
                     AppTab.TRENDS -> TrendsScreen(state)
@@ -222,6 +237,8 @@ fun HealthCoachRoot(
                     AppTab.CHAT -> ChatScreen(
                         state = state,
                         onSendChat = onSendChat,
+                        onStopChat = onStopChat,
+                        onOpenSettings = { selectedTab = AppTab.SETTINGS },
                         onAddAttachments = onAddChatAttachments,
                         onRemoveAttachment = onRemoveChatAttachment,
                     )
@@ -236,6 +253,7 @@ fun HealthCoachRoot(
                         onConfirmNutritionComplete = onConfirmNutritionComplete,
                         onClearLocalData = onClearLocalData,
                     )
+                }
                 }
             }
         }

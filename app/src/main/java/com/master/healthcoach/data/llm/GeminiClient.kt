@@ -1,5 +1,12 @@
 package com.master.healthcoach.data.llm
 
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.Response
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
 import java.io.IOException
 import java.util.Base64
 import java.util.concurrent.TimeUnit
@@ -188,19 +195,34 @@ class GeminiClient(
             .header("x-goog-api-key", apiKey)
             .post(json.encodeToString(JsonObject.serializer(), body).toRequestBody(JSON_MEDIA_TYPE))
             .build()
-        httpClient.newCall(request).execute().use { response ->
-            val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                throw IOException("Gemini APIエラー (${response.code}): ${safeError(raw)}")
-            }
-            val root = json.parseToJsonElement(raw).jsonObject
-            val text = root["candidates"]?.jsonArray
-                ?.firstOrNull()?.jsonObject
-                ?.get("content")?.jsonObject
-                ?.get("parts")?.jsonArray
-                ?.firstNotNullOfOrNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }
-            RawResponse(root, text)
+        val raw = suspendCancellableCoroutine<String> { continuation ->
+            val call = httpClient.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(e)
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        val text = response.use {
+                            val bodyText = it.body?.string().orEmpty()
+                            if (!it.isSuccessful) throw IOException("Gemini APIエラー (${it.code}): ${safeError(bodyText)}")
+                            bodyText
+                        }
+                        if (continuation.isActive) continuation.resume(text)
+                    } catch (e: Exception) {
+                        if (continuation.isActive) continuation.resumeWithException(e)
+                    }
+                }
+            })
         }
+        val root = json.parseToJsonElement(raw).jsonObject
+        val text = root["candidates"]?.jsonArray
+            ?.firstOrNull()?.jsonObject
+            ?.get("content")?.jsonObject
+            ?.get("parts")?.jsonArray
+            ?.firstNotNullOfOrNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }
+        RawResponse(root, text)
     }
 
     private fun buildRequestBody(
