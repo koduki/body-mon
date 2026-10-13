@@ -257,6 +257,16 @@ class WeeklyReportBuilderTest {
         assertEquals(null, report.adaptiveTdeeLowKcal)
     }
 
+    @Test
+    fun `monthly goal is converted to a weekly percentage without changing stored goal`() {
+        val today = LocalDate.of(2026, 8, 20)
+        val bodies = (1..7).map { body(today.minusDays(it.toLong()), fat = 20.0, lean = 60.0, weight = 80.0) }
+        val goal = GoalEntity(monthlyWeightLossKg = 1.0)
+        val report = WeeklyReportBuilder.build(today, emptyList(), bodies, goal, zoneId)
+        assertEquals(0.287687, report.targetLossRatePercentPerWeek!!, 0.00001)
+        assertEquals(1.0, goal.monthlyWeightLossKg!!, 0.0001)
+    }
+
     private fun daily(
         date: LocalDate,
         steps: Long = 8_000,

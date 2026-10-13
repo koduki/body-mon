@@ -39,8 +39,8 @@ class NutritionWriteShapeTest {
         assertEquals(24.0, shape.medianDurationHours)
         assertTrue(shape.likelyDailyTotals)
         assertFalse(shape.looksMealScoped)
-        assertTrue(shape.summary.contains("日次合計"))
-        assertTrue(shape.summary.contains("1食"))
+        assertTrue(shape.summary.contains("日次記録形式"))
+        assertTrue(shape.summary.contains("食事回数"))
     }
 
     @Test
@@ -58,7 +58,7 @@ class NutritionWriteShapeTest {
         assertEquals(0.0, shape.medianDurationHours)
         assertTrue(shape.likelyDailyTotals)
         assertFalse(shape.looksMealScoped)
-        assertTrue(shape.summary.contains("日次合計"))
+        assertTrue(shape.summary.contains("日次記録形式"))
     }
 
     @Test
@@ -99,7 +99,7 @@ class NutritionWriteShapeTest {
         assertFalse(shape.likelyDailyTotals)
         assertFalse(shape.looksMealScoped)
         assertTrue(shape.summary.contains("粒度は未確定"))
-        assertTrue(shape.summary.contains("start/end"))
+        assertTrue(shape.summary.contains("推定を保留"))
     }
 
     private fun interval(
