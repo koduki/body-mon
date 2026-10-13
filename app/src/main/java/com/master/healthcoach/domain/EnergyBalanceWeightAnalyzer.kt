@@ -34,7 +34,7 @@ object EnergyBalanceWeightAnalyzer {
         }
 
         if (
-            snapshot.nutritionMeasurementDays < MIN_NUTRITION_DAYS ||
+            (snapshot.nutritionCompleteDays ?: snapshot.nutritionMeasurementDays) < MIN_NUTRITION_DAYS ||
             balance == null ||
             observedTrend == null ||
             implied == null

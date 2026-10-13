@@ -93,11 +93,11 @@ data class NutritionWriteShape(
             } ?: "件数不明"
             val interpretation = when {
                 likelyDailyTotals ->
-                    "日次合計の書き方に近く、区間が1日に近い場合は1食（日次合計）として扱う"
+                    "日次記録形式の可能性。食事回数と全食記録の有無は確定しない"
                 looksMealScoped ->
                     "食事単位の可能性。start/endが近いレコードを1食にまとめて回数とPFCを出す"
                 else ->
-                    "粒度は未確定。start/endが近いレコードを1食として回数を数える"
+                    "粒度は未確定。食事種別・回数の推定を保留する"
             }
             return NutritionWriteShape(
                 recordDays = byDay.size,

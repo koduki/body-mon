@@ -21,7 +21,7 @@ class CoachAssessmentEngineTest {
         )
 
         assertEquals(CoachVerdict.ON_TRACK, assessment.verdict)
-        assertEquals("high", assessment.confidence)
+        assertEquals("medium", assessment.confidence)
         assertTrue(assessment.signals.any { it.code == "LOSS_RATE_ON_TARGET" })
         assertTrue(assessment.signals.any { it.code == "BODY_RECOMPOSITION_DIRECTION" })
         assertTrue(assessment.signals.any { it.code == "MORNING_ROUTINE_ON_TRACK" })
@@ -116,7 +116,7 @@ class CoachAssessmentEngineTest {
 
         assertTrue(merged.summary.startsWith("専門家判定は「調整推奨」"))
         assertEquals(2, merged.nextActions.size)
-        assertEquals("high", merged.confidence)
+        assertEquals("medium", merged.confidence)
         assertTrue(merged.dataLimitations.any { it.contains("重量・回数") })
         assertTrue(chat.contains("専門家ビュー（端末内KPI判定）"))
         assertTrue(chat.contains("今週の一手"))

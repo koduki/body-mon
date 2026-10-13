@@ -25,7 +25,7 @@ class NutritionMealsTest {
         )
 
         assertEquals(3, meals.size)
-        assertEquals(listOf("朝", "昼", "夕"), meals.map { it.mealLabel })
+        assertEquals(listOf("食事種別不明", "食事種別不明", "食事種別不明"), meals.map { it.mealLabel })
         assertEquals(2, meals[0].recordCount)
         assertEquals(35.0, meals[0].proteinGrams)
         assertFalse(meals.any { it.isDailyTotal })
@@ -68,7 +68,7 @@ class NutritionMealsTest {
         )
         assertEquals(1, meals.size)
         assertTrue(meals.single().isDailyTotal)
-        assertEquals("日次合計", meals.single().mealLabel)
+        assertEquals("日次記録（食事内訳不明）", meals.single().mealLabel)
     }
 
     @Test
@@ -256,6 +256,15 @@ class NutritionMealsTest {
         assertEquals(2, meals.size)
         assertEquals(listOf("朝", "昼"), meals.map { it.mealLabel })
         assertFalse(meals.any { it.isDailyTotal })
+    }
+
+    @Test
+    fun `asken midnight one second placeholder is daily shaped and not a snack`() {
+        val midnight = date.atStartOfDay(zone).toInstant().toEpochMilli()
+        val raw = NutritionRecordSnapshot(midnight, midnight + 1000, 0, 1600.0, 90.0, 40.0, 200.0, "jp.co.greenhouse.asken")
+        val result = NutritionMealClusterer.cluster(listOf(raw), zone).single()
+        assertTrue(result.isDailyTotal)
+        assertEquals("日次記録（食事内訳不明）", result.mealLabel)
     }
 
     private fun record(

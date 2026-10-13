@@ -64,7 +64,12 @@ class HealthRepository(
             )
         val bundle = gateway.sync(days = if (needsInitialBackfill) 90 else 28)
         database.withTransaction {
-            dao.upsertDaily(bundle.daily)
+            val existing = dao.getDaily(
+                bundle.daily.first().date, bundle.daily.last().date,
+            ).associateBy { it.date }
+            dao.upsertDaily(bundle.daily.map { day ->
+                day.copy(nutritionComplete = day.intakeCaloriesKcal != null && existing[day.date]?.nutritionComplete == true)
+            })
             dao.upsertBody(bundle.body)
             dao.upsertSources(bundle.sources)
             dao.deleteExerciseSessionsInRange(
@@ -102,6 +107,10 @@ class HealthRepository(
         dao.upsertGoal(goal.copy(id = 1))
         rebuildWeekly()
     }
+    suspend fun setNutritionComplete(date: String, complete: Boolean) {
+        dao.setNutritionComplete(date, complete)
+        rebuildWeekly()
+    }
     suspend fun getGoal(): GoalEntity? = dao.getGoal()
     suspend fun getLatestWeekly(): WeeklyReportEntity? = dao.getLatestWeekly()
 
@@ -127,12 +136,20 @@ class HealthRepository(
         role: String,
         content: String,
         attachmentNames: String? = null,
+        modelId: String? = null,
+        appVersionName: String? = null,
+        policyVersion: String? = null,
+        toolTraceJson: String? = null,
     ): Long = dao.insertMessage(
         ChatMessageEntity(
             role = role,
             content = content,
             attachmentNames = attachmentNames,
             createdAtEpochMillis = System.currentTimeMillis(),
+            modelId = modelId,
+            appVersionName = appVersionName,
+            policyVersion = policyVersion,
+            toolTraceJson = toolTraceJson,
         ),
     )
 

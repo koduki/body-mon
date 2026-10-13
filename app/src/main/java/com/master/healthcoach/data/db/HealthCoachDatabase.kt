@@ -19,7 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ChatMessageEntity::class,
         ConversationMemoryEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = false,
 )
 abstract class HealthCoachDatabase : RoomDatabase() {
@@ -39,6 +39,7 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 MIGRATION_5_6,
                 MIGRATION_6_7,
                 MIGRATION_7_8,
+                MIGRATION_8_9,
             ).build()
 
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -118,6 +119,24 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE daily_health_summary ADD COLUMN carbohydrateGrams REAL",
                 )
+            }
+        }
+
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE daily_health_summary ADD COLUMN nutritionComplete INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE daily_health_summary ADD COLUMN nutritionRecordStatus TEXT NOT NULL DEFAULT 'legacy'")
+                db.execSQL("ALTER TABLE daily_health_summary ADD COLUMN metricOriginsJson TEXT NOT NULL DEFAULT '{}'")
+                db.execSQL("ALTER TABLE daily_health_summary ADD COLUMN heartRateCoverageMinutes INTEGER")
+                db.execSQL("ALTER TABLE daily_health_summary ADD COLUMN heartRateOutsideExerciseSamples INTEGER")
+                db.execSQL("ALTER TABLE daily_health_summary ADD COLUMN hikingMinutes INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE daily_health_summary ADD COLUMN hiitMinutes INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE nutrition_meals ADD COLUMN isDailyRecord INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE goals ADD COLUMN monthlyWeightLossKg REAL")
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN modelId TEXT")
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN appVersionName TEXT")
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN policyVersion TEXT")
+                db.execSQL("ALTER TABLE chat_messages ADD COLUMN toolTraceJson TEXT")
             }
         }
 

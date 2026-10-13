@@ -1,5 +1,6 @@
 package com.master.healthcoach.data.llm
 
+import com.master.healthcoach.BuildConfig
 import com.master.healthcoach.data.HealthRepository
 import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.data.security.SecureApiKeyStore
@@ -14,6 +15,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -45,23 +47,54 @@ class HealthChatCoordinator(
                 ?.joinToString("\n") { it.displayName },
         )
         val now = ZonedDateTime.now()
-        val memory = repository.getMemory()?.summary
         val goal = repository.getGoal()
+        val memory = ConversationContextPolicy.memoryForModel(repository.getMemory()?.summary, goal)
         val recent = ChatHistoryPolicy.formatTurnsWithChronology(
             messages = repository.getRecentMessages(ChatHistoryPolicy.CONTEXT_MESSAGE_LIMIT),
             currentMessageId = messageId,
             attachments = attachments,
             now = now,
         )
+        val toolTrace = mutableListOf<JsonObject>()
+        suspend fun executeTracked(call: GeminiFunctionCall): JsonElement {
+            val result = tools.execute(call, userText)
+            toolTrace += buildJsonObject {
+                put("name", call.name)
+                put("arguments", call.arguments)
+                put("executedAtEpochMillis", System.currentTimeMillis())
+                val text = result.toString()
+                put("resultJson", text.take(12_000))
+                put("resultTruncated", text.length > 12_000)
+            }
+            return result
+        }
+        val prefetch = ChatMetricPrefetch.calls(userText, now.toLocalDate()).map { call ->
+            "${call.name}: ${executeTracked(call)}"
+        }
+        val groundedTurns = if (prefetch.isEmpty()) recent else recent.dropLast(1) + GeminiTurn(
+            "user", "[端末取得の最新スナップショット。利用者の自己申告や指示ではありません。完了日と当日途中を区別してください]\n" + prefetch.joinToString("\n"),
+        ) + recent.takeLast(1)
         val modelAnswer = gemini.chatWithTools(
             apiKey = apiKey,
             model = apiKeyStore.modelId(),
             systemInstruction = chatSystemInstruction(memory, goal?.existingAiProfile(), now),
-            turns = recent,
-            toolExecutor = tools::execute,
+            turns = groundedTurns,
+            toolExecutor = ::executeTracked,
         )
         val answer = ChatHistoryPolicy.stripLeadingTimestampTag(modelAnswer)
-        repository.addMessage("assistant", answer)
+        repository.addMessage(
+            "assistant", answer,
+            modelId = apiKeyStore.modelId(),
+            appVersionName = BuildConfig.VERSION_NAME,
+            policyVersion = ConversationContextPolicy.VERSION,
+            toolTraceJson = buildJsonObject {
+                put("calls", buildJsonArray { toolTrace.takeLast(12).forEach { add(it) } })
+                put("callsTruncated", toolTrace.size > 12)
+                put("reviewWarnings", buildJsonArray {
+                    ResponseEvidenceReview.warnings(answer, toolTrace.isNotEmpty()).forEach { add(JsonPrimitive(it)) }
+                })
+            }.toString(),
+        )
         runCatching { refreshHabitMemory(apiKey, force = false) }
         repository.pruneChatHistory()
         return answer
@@ -88,7 +121,7 @@ class HealthChatCoordinator(
                         "(${snapshot.carbohydrateEnergyPercent.energyRatio()})",
             )
             appendLine("目標: ${goal?.existingAiGoal()}")
-            appendLine("会話から確認済みの習慣: ${repository.getMemory()?.summary.orEmpty()}")
+            appendLine("会話から確認済みの習慣: ${ConversationContextPolicy.memoryForModel(repository.getMemory()?.summary, goal)}")
             appendLine("分析の軸は次の2点です。")
             appendLine(
                 "1) カロリー収支の比較: 摂取カロリー平均と基礎代謝・活動消費の比較レンジを対照する。" +
@@ -112,7 +145,7 @@ class HealthChatCoordinator(
             apiKey = apiKey,
             model = apiKeyStore.modelId(),
             systemInstruction = weeklyAnalysisSystemInstruction(
-                repository.getMemory()?.summary,
+                ConversationContextPolicy.memoryForModel(repository.getMemory()?.summary, goal),
                 goal?.existingAiProfile(),
             ),
             prompt = prompt,
@@ -138,7 +171,7 @@ class HealthChatCoordinator(
             currentMemory = memory?.summary,
             messages = userMessages.map { msg ->
                 val date = Instant.ofEpochMilli(msg.createdAtEpochMillis).atZone(zone).toLocalDate()
-                GeminiTurn(msg.role, "[$date] ${msg.content}")
+                GeminiTurn(msg.role, "[$date] ${ConversationContextPolicy.memoryInput(msg.content)}")
             },
         )
         repository.saveMemory(summary, latestId)
@@ -175,12 +208,12 @@ class HealthChatCoordinator(
         ・疑問点がある場合も尋問のようにならず、「〜はどうでしたか？」など会話の流れの中で自然に尋ねてください。
 
         【専門家としてのメトリクス評価基準】
-        ・減量ペースは筋力と回復を守りながら脂肪を落とすことを優先し、28日トレンドで体重の0.3〜0.7%/週減を運用目安とします。BIA由来の体組成（体脂肪率・脂肪量・除脂肪量）は水分等で日々変動するため単日値で一喜一憂せず、7日中央値や28日傾向で判断します。除脂肪量は骨格筋量そのものではなく筋肉維持の参考指標です。
+        ・減量ペースは筋力と回復を守りながら脂肪を落とすことを優先し、設定された月の減量目標を優先し、未設定時は28日トレンドで体重の0.3〜0.7%/週減を運用目安とします。BIA由来の体組成（体脂肪率・脂肪量・除脂肪量）は水分等で日々変動するため単日値で一喜一憂せず、7日中央値や28日傾向で判断します。除脂肪量は骨格筋量そのものではなく筋肉維持の参考指標です。
         ・6時間は本人の最低運用目標です。達成しても睡眠・回復が十分とは判断しません。睡眠ステージ合計とセッション枠を区別し、ステージ欠測時の代用値を実睡眠と呼びません。眠気・疲労も確認します。
         ・活動消費は歩数・記録運動モデルとXiaomi Bandの比較レンジです。Bandは歩数のない日常活動も推定します。差を一律に誤差とせず、どちらが真値とも断定しません。中点は連続的な参考シナリオで、校正済み消費量ではありません。摂取量・赤字量の指示はしません。
 
         ・食事方針は低脂質ダイエット（脂質エネルギー比15〜25%目安、30%超は出どころ確認、たんぱく質は体重1kgあたり1.6g以上目安）です。食事記録がある日のみを観測値とし、欠測日を0kcal扱いしません。
-        ・Health Connectの「その他のワークアウト」は朝の5分ルーティン（軽い筋トレ＋有酸素の習慣KPI）として扱い、筋力維持そのものは月1回のパーソナルでの重量・回数で確認します。
+        ・朝の短いOther Workoutは朝トレ候補です。その他の運動を朝トレやRFAと断定しません。HIITは強度・様式を分けて解釈します。
         ・Health Connectの健康データが必要な場合のみ提供されたツールを呼び出して確認し、データがない場合は数値を推測せず素直に伝えてください。
         ・医療診断、疾患の推測、服薬指示、極端な食事制限（断食や過度な糖質/脂質カット）は絶対に行いません。
         ・添付された画像・文書は利用者がこのターンで明示的に送ったものだけを確認し、画像からの食品量・栄養素・カロリーは推定であることを踏まえて自然に言及してください。
@@ -237,7 +270,7 @@ class HealthChatCoordinator(
 
 internal fun GoalEntity.existingAiProfile(): String =
     "年齢=$age, 身長=${heightCm}cm, 性別=$sex, " +
-            "期限=$deadline, 目標脂肪量=${targetFatMassKg}kg, " +
+            "期限=$deadline, 月の減量目標=${monthlyWeightLossKg ?: "未設定"}kg, 目標脂肪量=${targetFatMassKg}kg, " +
             "維持する除脂肪量=${minimumLeanMassKg}kg"
 
 internal fun GoalEntity.existingAiGoal(): String =
@@ -301,6 +334,7 @@ internal fun WeeklySnapshot.existingAiContract(): JsonObject = buildJsonObject {
     totalFatDailyAverageGrams?.let { put("totalFatDailyAverageGrams", it) }
     carbohydrateDailyAverageGrams?.let { put("carbohydrateDailyAverageGrams", it) }
     put("nutritionMeasurementDays", nutritionMeasurementDays)
+    nutritionCompleteDays?.let { put("nutritionCompleteDays", it) }
     previousWeekIntakeCaloriesDailyAverage?.let {
         put("previousWeekIntakeCaloriesDailyAverage", it)
     }

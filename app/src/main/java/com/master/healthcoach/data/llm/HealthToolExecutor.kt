@@ -22,7 +22,7 @@ class HealthToolExecutor(
     private val todayProvider: () -> LocalDate = { LocalDate.now() },
     private val zoneIdProvider: () -> ZoneId = { ZoneId.systemDefault() },
 ) {
-    suspend fun execute(call: GeminiFunctionCall): JsonElement = when (call.name) {
+    suspend fun execute(call: GeminiFunctionCall, userMessage: String? = null): JsonElement = when (call.name) {
         "get_body_composition" -> body(call)
         "get_activity_summary" -> activity(call)
         "get_exercise_summary" -> exercise(call)
@@ -32,7 +32,22 @@ class HealthToolExecutor(
         "get_metabolism_summary" -> metabolism(call)
         "get_nutrition_summary" -> nutrition(call)
         "get_goal_progress" -> goals()
+        "update_profile" -> updateProfile(call, userMessage)
         else -> buildJsonObject { put("error", "未対応の関数: ${call.name}") }
+    }
+
+    private suspend fun updateProfile(call: GeminiFunctionCall, userMessage: String?): JsonElement {
+        return try {
+            val updated = ConversationProfileUpdate.apply(repository.getGoal(), call.arguments, userMessage)
+            repository.saveGoal(updated)
+            buildJsonObject {
+                put("status", "saved")
+                put("profile", updated.existingAiProfile())
+                put("message", "会話のプロフィールを設定へ反映しました。設定画面で修正できます")
+            }
+        } catch (error: IllegalArgumentException) {
+            buildJsonObject { put("error", error.message ?: "プロフィールを更新できません") }
+        }
     }
 
     private fun range(call: GeminiFunctionCall): Pair<LocalDate, LocalDate> {
@@ -55,6 +70,9 @@ class HealthToolExecutor(
         put("yesterdayDate", yesterday.toString())
         put("from", from.toString())
         put("to", to.toString())
+        put("recordPresenceScope", "requested_range_only")
+        put("todayCumulativeIsPartial", to >= today)
+        put("recommendedCompletedDayEnd", yesterday.toString())
         put("hasTodayRecord", today.toString() in measuredDates)
         put("hasYesterdayRecord", yesterday.toString() in measuredDates)
     }
@@ -91,6 +109,8 @@ class HealthToolExecutor(
                     add(buildJsonObject {
                         put("date", item.date)
                         put("relativeDay", relativeDay(item.date))
+                        put("isPartialDay", false)
+                        put("recordKind", "point_measurement")
                         number("weightKg", item.weightKg)
                         number("bodyFatPercent", item.bodyFatPercent)
                         number("fatMassKg", item.fatMassKg)
@@ -144,10 +164,13 @@ class HealthToolExecutor(
                     add(buildJsonObject {
                         put("date", item.date)
                         put("relativeDay", relativeDay(item.date))
+                        put("isPartialDay", item.date == todayProvider().toString())
                         item.steps?.let { put("steps", it) }
                         number("distanceMeters", item.distanceMeters)
                         put("cyclingMinutes", item.cyclingMinutes)
                         number("activeCaloriesKcal", item.activeCaloriesKcal)
+                        put("metricOriginsJson", item.metricOriginsJson)
+                        put("updatedAtEpochMillis", item.updatedAtEpochMillis)
                         estimate?.let {
                             number(
                                 "referenceStepModelActiveKcal",
@@ -190,15 +213,18 @@ class HealthToolExecutor(
             put("morningRoutineMinutes", items.sumOf { it.morningRoutineMinutes })
             put("morningRoutineDays", items.count { it.morningRoutineMinutes > 0 })
             put("cardioMinutes", items.sumOf { it.cardioMinutes })
+            put("hikingMinutes", items.sumOf { it.hikingMinutes })
+            put("hiitMinutes", items.sumOf { it.hiitMinutes })
             put(
                 "morningRoutineInterpretation",
-                "Other Workoutを朝の5分ルーティン（軽い筋トレ＋有酸素）として扱う",
+                "朝4〜10時開始・1〜15分のOther Workoutを朝トレ候補として扱う。一般運動・RFA・筋力維持の証明とは区別する",
             )
             put("daily", buildJsonArray {
                 items.filter { it.exerciseSessionCount > 0 }.forEach { item ->
                     add(buildJsonObject {
                         put("date", item.date)
                         put("relativeDay", relativeDay(item.date))
+                        put("isPartialDay", item.date == todayProvider().toString())
                         put("sessions", item.exerciseSessionCount)
                         put("minutes", item.exerciseMinutes)
                         put("strengthMinutes", item.strengthMinutes)
@@ -252,12 +278,16 @@ class HealthToolExecutor(
                     add(buildJsonObject {
                         put("date", item.date)
                         put("relativeDay", relativeDay(item.date))
+                        put("isPartialDay", false)
+                        put("recordKind", "completed_sleep_session")
                         item.sleepMinutes?.let {
                             put("sleepMinutes", it)
                             put("meetsSixHourOpportunity", (item.sleepSessionMinutes ?: it) >= SLEEP_BASELINE_MINUTES)
                         }
                         number("sleepSessionMinutes", item.sleepSessionMinutes)
                         put("sleepDurationSource", item.sleepDurationSource)
+                        put("sleepHeartRateStatus", if (item.sleepHeartRateAverageBpm == null) "no_samples_in_main_sleep" else "observed")
+                        put("metricOriginsJson", item.metricOriginsJson)
                         item.sleepHeartRateAverageBpm?.let {
                             put("sleepHeartRateAverageBpm", it)
                         }
@@ -292,6 +322,11 @@ class HealthToolExecutor(
                     add(buildJsonObject {
                         put("date", item.date)
                         put("relativeDay", relativeDay(item.date))
+                        put("isPartialDay", item.date == todayProvider().toString())
+                        put("metricOriginsJson", item.metricOriginsJson)
+                        item.heartRateCoverageMinutes?.let { put("coverageMinutes", it) }
+                        item.heartRateOutsideExerciseSamples?.let { put("outsideExerciseSamples", it) }
+                        put("interpretation", if (item.heartRateOutsideExerciseSamples == 0) "workout_only_not_resting" else "observed_samples_not_proven_resting")
                         item.heartRateAverageBpm?.let { put("averageBpm", it) }
                         item.heartRateMinimumBpm?.let { put("minimumBpm", it) }
                         item.heartRateMaximumBpm?.let { put("maximumBpm", it) }
@@ -323,6 +358,7 @@ class HealthToolExecutor(
                     add(buildJsonObject {
                         put("date", item.date)
                         put("relativeDay", relativeDay(item.date))
+                        put("isPartialDay", item.date == todayProvider().toString())
                         item.moderateIntensityMinutes?.let { put("moderateMinutes", it) }
                         item.vigorousIntensityMinutes?.let { put("vigorousMinutes", it) }
                     })
@@ -347,6 +383,7 @@ class HealthToolExecutor(
                     add(buildJsonObject {
                         put("date", item.date)
                         put("relativeDay", relativeDay(item.date))
+                        put("isPartialDay", item.date == todayProvider().toString())
                         number("basalCaloriesKcal", item.basalCaloriesKcal)
                     })
                 }
@@ -372,7 +409,11 @@ class HealthToolExecutor(
         return buildJsonObject {
             putChronologyHeader(from, to, measuredDates)
             put("measurementDays", measured.size)
-            put("totalMealCount", meals.size)
+            put("confirmedCompleteDays", items.count { it.intakeCaloriesKcal != null && it.nutritionComplete })
+            put("nutritionRecordCount", meals.size)
+            number("totalMealCount", meals.count { !it.isDailyRecord && it.mealType in 1..4 }.takeIf { it > 0 })
+            put("dailyRecordCount", meals.count { it.isDailyRecord })
+            put("coverageNote", "記録の存在は全食記録済みの証明ではありません。日次形式や種別不明から食事回数は推定しません")
             put(
                 "sourceNote",
                 "あすけんからHealth Connectへ書き出されるのは摂取カロリー・たんぱく質・脂質・炭水化物。" +
@@ -406,6 +447,9 @@ class HealthToolExecutor(
                     add(buildJsonObject {
                         put("date", item.date)
                         put("relativeDay", relativeDay(item.date))
+                        put("isPartialDay", item.date == todayProvider().toString())
+                        put("nutritionRecordStatus", item.nutritionRecordStatus)
+                        put("nutritionComplete", item.nutritionComplete)
                         number("intakeCaloriesKcal", item.intakeCaloriesKcal)
                         number("proteinGrams", item.proteinGrams)
                         number("totalFatGrams", item.totalFatGrams)
@@ -434,6 +478,7 @@ class HealthToolExecutor(
                         put("startTimeLocal", formatEpochLocalTime(meal.startEpochMillis))
                         put("startEpochMillis", meal.startEpochMillis)
                         put("mealLabel", meal.mealLabel)
+                        put("isDailyRecord", meal.isDailyRecord)
                         number("intakeCaloriesKcal", meal.intakeCaloriesKcal)
                         number("proteinGrams", meal.proteinGrams)
                         number("totalFatGrams", meal.totalFatGrams)
@@ -468,7 +513,11 @@ class HealthToolExecutor(
             goal.age?.let { put("age", it) }
             number("heightCm", goal.heightCm)
             goal.sex?.let { put("sex", it) }
-            goal.deadline?.let { put("deadline", it) }
+            goal.deadline?.let {
+                put("deadline", it)
+                put("deadlineExpired", runCatching { LocalDate.parse(it).isBefore(today) }.getOrDefault(false))
+            }
+            number("monthlyWeightLossKg", goal.monthlyWeightLossKg)
             number("targetFatMassKg", goal.targetFatMassKg)
             number("minimumLeanMassKg", goal.minimumLeanMassKg)
             goal.dailySteps?.let { put("dailySteps", it) }

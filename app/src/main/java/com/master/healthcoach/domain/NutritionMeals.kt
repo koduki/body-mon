@@ -140,13 +140,13 @@ object NutritionMealClusterer {
             compareBy<NutritionRecordSnapshot> { it.startEpochMillis }
                 .thenBy { it.mealType },
         ).forEach { record ->
-            if (isUntypedDailySpan(record)) {
+            if (isDailyShaped(record, zoneId)) {
                 clusters.add(mutableListOf(record))
                 return@forEach
             }
             val current = clusters.lastOrNull()
             if (current != null &&
-                !current.any(::isUntypedDailySpan) &&
+                !current.any { isDailyShaped(it, zoneId) } &&
                 belongs(current, record)
             ) {
                 current.add(record)
@@ -208,9 +208,9 @@ object NutritionMealClusterer {
         val mealType = majorityMealType(records)
         val typedMeal = knownMealType(mealType) != null
         val dailyTotal = !typedMeal &&
-            (records.any(::isUntypedDailySpan) || end - start >= DAILY_SPAN_MS)
+            (records.any { isDailyShaped(it, zoneId) } || end - start >= DAILY_SPAN_MS)
         val label = if (dailyTotal) {
-            "日次合計"
+            "日次記録（食事内訳不明）"
         } else {
             mealLabel(mealType, start, zoneId)
         }
@@ -239,18 +239,16 @@ object NutritionMealClusterer {
     private fun mealLabel(mealType: Int, startEpochMillis: Long, zoneId: ZoneId): String {
         val typed = NutritionWriteShape.mealTypeLabel(mealType)
         if (typed != "不明") return typed
-        val hour = Instant.ofEpochMilli(startEpochMillis).atZone(zoneId).hour
-        return when (hour) {
-            in 5 until 10 -> "朝"
-            in 10 until 15 -> "昼"
-            in 15 until 21 -> "夕"
-            else -> "間食"
-        }
+        return "食事種別不明"
     }
 
-    private fun isUntypedDailySpan(record: NutritionRecordSnapshot): Boolean =
-        knownMealType(record.mealType) == null &&
-            record.endEpochMillis - record.startEpochMillis >= DAILY_SPAN_MS
+    private fun isDailyShaped(record: NutritionRecordSnapshot, zoneId: ZoneId): Boolean {
+        if (knownMealType(record.mealType) != null) return false
+        val time = Instant.ofEpochMilli(record.startEpochMillis).atZone(zoneId).toLocalTime()
+        val duration = record.endEpochMillis - record.startEpochMillis
+        return duration >= DAILY_SPAN_MS ||
+            (record.origin == "jp.co.greenhouse.asken" && time.toSecondOfDay() == 0 && duration in 0..1000L)
+    }
 
     private fun knownMealType(mealType: Int): Int? =
         mealType.takeIf {

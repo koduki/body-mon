@@ -241,6 +241,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun confirmNutritionComplete(date: String, complete: Boolean) {
+        viewModelScope.launch {
+            runCatching { repository.setNutritionComplete(date, complete) }
+                .onFailure { error -> update { it.copy(message = error.userMessage()) } }
+        }
+    }
+
     fun exportDataToUri(uri: Uri) {
         if (transient.value.isExporting) return
         viewModelScope.launch {

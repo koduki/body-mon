@@ -118,7 +118,8 @@ class GeminiClient(
             次の利用者発言から、健康コーチングに継続利用できる確認済み情報を更新してください。
             食事、睡眠、運動、仕事、生活リズム、好み、制約、目標、継続中の方針を優先します。
             利用者の訂正や新しい発言は古い記述より優先してください。
-            アシスタントの提案や推測を利用者の習慣として記録してはいけません。
+            アシスタントの提案や推測、貼り付けた参考文章・他AIの回答を本人の確定情報として記録してはいけません。
+            年齢・身長・性別は設定で管理するため、この自由文メモリーへ重複保存しないでください。
             一時的な健康数値、「今日」「昨日」などの単日の出来事（その日食べたものや単日の体調・予定）、根拠のない因果関係、センシティブな推測を追加しないでください。
             日本語の短い箇条書きで800文字以内にしてください。
 
@@ -252,6 +253,20 @@ class GeminiClient(
                         "指定期間の摂取カロリー、たんぱく質、脂質、炭水化物、PFCエネルギー比、および朝食・昼食・夕食・間食などの各食事レコード（時刻・カロリー・PFC）を取得します",
                     ),
                 )
+                add(buildJsonObject {
+                    put("name", "update_profile")
+                    put("description", "このターンで利用者が自分の年齢・身長・性別を伝えたり訂正した場合、設定に保存します。最新の本人申告を優先。引用の他人の情報・推測・過去の発言だけでは呼びません。変更する項目だけ指定します")
+                    put("parameters", buildJsonObject {
+                        put("type", "object")
+                        put("properties", buildJsonObject {
+                            put("age", buildJsonObject { put("type", "integer"); put("description", "年齢13〜120歳") })
+                            put("heightCm", buildJsonObject { put("type", "number"); put("description", "身長100〜250cm") })
+                            put("sex", buildJsonObject { put("type", "string"); put("description", "本人の申告した性別") })
+                            put("evidence", buildJsonObject { put("type", "string"); put("description", "現在の利用者メッセージから本人申告をそのまま抜粋") })
+                        })
+                        put("required", buildJsonArray { add("evidence") })
+                    })
+                })
                 add(buildJsonObject {
                     put("name", "get_goal_progress")
                     put("description", "現在の目標と直近の進捗を取得します")

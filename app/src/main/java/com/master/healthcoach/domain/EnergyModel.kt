@@ -225,6 +225,7 @@ object EnergyModel {
         day: DailyHealthSummaryEntity,
         estimate: ActiveEnergyEstimate?,
     ): EnergyRange? {
+        if (!day.nutritionComplete) return null
         val intake = day.intakeCaloriesKcal ?: return null
         val basal = day.basalCaloriesKcal ?: return null
         val active = estimate?.range ?: return null

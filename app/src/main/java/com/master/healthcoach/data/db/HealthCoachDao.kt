@@ -62,10 +62,10 @@ interface HealthCoachDao {
     @Query("SELECT * FROM goals WHERE id = 1")
     suspend fun getGoal(): GoalEntity?
 
-    @Query("SELECT * FROM weekly_reports ORDER BY weekStart DESC LIMIT 1")
+    @Query("SELECT * FROM weekly_reports ORDER BY generatedAtEpochMillis DESC, weekStart DESC LIMIT 1")
     fun observeLatestWeekly(): Flow<WeeklyReportEntity?>
 
-    @Query("SELECT * FROM weekly_reports ORDER BY weekStart DESC LIMIT 1")
+    @Query("SELECT * FROM weekly_reports ORDER BY generatedAtEpochMillis DESC, weekStart DESC LIMIT 1")
     suspend fun getLatestWeekly(): WeeklyReportEntity?
 
     @Query("SELECT * FROM daily_health_summary WHERE date BETWEEN :from AND :to ORDER BY date")
@@ -74,8 +74,11 @@ interface HealthCoachDao {
     @Query("SELECT * FROM body_composition_daily WHERE date BETWEEN :from AND :to ORDER BY date")
     suspend fun getBody(from: String, to: String): List<BodyCompositionEntity>
 
-    @Query("SELECT EXISTS(SELECT 1 FROM daily_health_summary WHERE date >= :from AND sleepDurationSource = 'legacy_session')")
+    @Query("SELECT EXISTS(SELECT 1 FROM daily_health_summary WHERE date >= :from AND (sleepDurationSource = 'legacy_session' OR nutritionRecordStatus = 'legacy'))")
     suspend fun needsMetricBackfill(from: String): Boolean
+
+    @Query("UPDATE daily_health_summary SET nutritionComplete = :complete WHERE date = :date AND intakeCaloriesKcal IS NOT NULL")
+    suspend fun setNutritionComplete(date: String, complete: Boolean)
 
     @Query("SELECT MIN(date) FROM daily_health_summary")
     suspend fun earliestDailyDate(): String?

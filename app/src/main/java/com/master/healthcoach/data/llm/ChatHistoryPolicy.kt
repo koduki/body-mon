@@ -106,7 +106,10 @@ object ChatHistoryPolicy {
                 ""
             }
             previousDate = msgDate
-            val cleanContent = stripLeadingTimestampTag(messageEntity.content)
+            val cleanContent = stripLeadingTimestampTag(
+                if (messageEntity.role == "assistant") ConversationContextPolicy.historicalAssistantContext(messageEntity.content)
+                else messageEntity.content,
+            )
             val annotatedText = "$dateBoundaryPrefix[発言日時: $timestamp（$relLabel）]\n$cleanContent"
             GeminiTurn(
                 role = messageEntity.role,

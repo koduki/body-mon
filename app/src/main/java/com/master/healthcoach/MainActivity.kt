@@ -59,6 +59,7 @@ class MainActivity : ComponentActivity() {
                     onRemoveChatAttachment = viewModel::removeChatAttachment,
                     onAnalyzeWeek = viewModel::analyzeWeek,
                     onExportData = viewModel::exportDataToUri,
+                    onConfirmNutritionComplete = viewModel::confirmNutritionComplete,
                     onClearLocalData = viewModel::clearLocalData,
                     onMessageShown = viewModel::consumeMessage,
                 )

@@ -16,7 +16,7 @@ internal fun bodyTrendSummary(
     body: List<BodyCompositionEntity>,
     zoneId: ZoneId,
 ): JsonObject {
-    val snapshot = WeeklyReportBuilder.build(today = end, daily = emptyList(), body = body, zoneId = zoneId)
+    val snapshot = WeeklyReportBuilder.build(today = end, daily = emptyList(), body = body, zoneId = zoneId, includeToday = true)
     val medianStart = end.minusDays(6)
     val trendStart = end.minusDays(27)
     val medianRecords = body.filter { LocalDate.parse(it.date) in medianStart..end }

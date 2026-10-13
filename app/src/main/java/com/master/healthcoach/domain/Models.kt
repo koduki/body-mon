@@ -70,6 +70,7 @@ data class WeeklySnapshot(
     val totalFatDailyAverageGrams: Double? = null,
     val carbohydrateDailyAverageGrams: Double? = null,
     val nutritionMeasurementDays: Int = 0,
+    val nutritionCompleteDays: Int? = null,
     val previousWeekIntakeCaloriesDailyAverage: Double? = null,
     val previousWeekProteinDailyAverageGrams: Double? = null,
     val previousWeekTotalFatDailyAverageGrams: Double? = null,
@@ -92,6 +93,7 @@ data class WeeklySnapshot(
     val adaptiveTdeeLowKcal: Double? = null,
     val adaptiveTdeeHighKcal: Double? = null,
     val adaptiveTdeeIntakeDays: Int = 0,
+    val targetLossRatePercentPerWeek: Double? = null,
 )
 
 @Serializable
