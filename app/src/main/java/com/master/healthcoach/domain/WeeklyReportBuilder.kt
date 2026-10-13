@@ -166,7 +166,7 @@ object WeeklyReportBuilder {
                 add("全食記録済みと確認されていない日は収支・摂取不足の判定を保留します。設定で記録範囲を確認できます")
             }
             if (currentDaily.any { it.nutritionRecordStatus == "daily_record_unverified" }) {
-                add("栄養は日次記録形式を含みます。食事回数と全食記録の有無は確定できません")
+                add("栄養は日次記録形式を含みます。食事回数・内訳は取得できず、全食の確認は本人入力を参照します")
             }
             if (currentDaily.any { it.heartRateOutsideExerciseSamples == 0 && it.heartRateAverageBpm != null }) {
                 add("心拍サンプルが運動中のみの日があります。日別平均を安静時心拍や回復判定に使いません")

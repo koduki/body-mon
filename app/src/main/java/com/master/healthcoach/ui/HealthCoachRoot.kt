@@ -586,7 +586,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         item {
             todayDaily?.let { day ->
                 Text("心拍の記録範囲: ${day.heartRateCoverageMinutes?.let { "$it 分" } ?: "未確認"}。運動外サンプル: ${day.heartRateOutsideExerciseSamples ?: "未確認"}。日別平均は安静時心拍ではありません。", style = MaterialTheme.typography.bodySmall)
-                if (day.nutritionRecordStatus == "daily_record_unverified") Text("食事は日次記録形式です。食事回数と全食記録の有無は未確認です。", style = MaterialTheme.typography.bodySmall)
+                if (day.nutritionRecordStatus == "daily_record_unverified") Text(if (day.nutritionComplete) "食事は日次記録形式です。全食記録済みと確認されていますが、食事回数・内訳は不明です。" else "食事は日次記録形式です。食事回数と全食記録の有無は未確認です。", style = MaterialTheme.typography.bodySmall)
             }
         }
         item { SectionHeader("睡眠と心拍", "本日に終了した主睡眠と本日の心拍記録") }
