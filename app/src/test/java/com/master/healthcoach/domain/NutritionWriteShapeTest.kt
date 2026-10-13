@@ -76,7 +76,8 @@ class NutritionWriteShapeTest {
         assertTrue(shape.looksMealScoped)
         assertEquals(listOf("夕", "昼", "朝"), shape.mealTypeLabels)
         assertTrue(shape.summary.contains("食事単位の可能性"))
-        assertTrue(shape.summary.contains("1食にまとめて"))
+        assertTrue(shape.summary.contains("区分付き記録のみ"))
+        assertTrue(shape.summary.contains("実際の食事時刻とは扱わない"))
     }
 
     @Test
