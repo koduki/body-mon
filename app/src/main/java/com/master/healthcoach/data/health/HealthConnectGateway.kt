@@ -350,7 +350,7 @@ class HealthConnectGateway(private val context: Context) {
                 heartRateMinimumBpm = result[HeartRateRecord.BPM_MIN],
                 heartRateMaximumBpm = result[HeartRateRecord.BPM_MAX],
                 heartRateMeasurementCount = result[HeartRateRecord.MEASUREMENTS_COUNT],
-                basalCaloriesKcal = otherResult?.get(
+                basalCaloriesKcal = result.get(
                     BasalMetabolicRateRecord.BASAL_CALORIES_TOTAL
                 )?.inKilocalories,
                 intakeCaloriesKcal = NutritionObservation.aggregateIfObserved(dayNutrition.map { it.energy?.inKilocalories }, otherResult?.get(NutritionRecord.ENERGY_TOTAL)?.inKilocalories),
@@ -547,13 +547,13 @@ class HealthConnectGateway(private val context: Context) {
                 add(HeartRateRecord.BPM_MAX)
                 add(HeartRateRecord.MEASUREMENTS_COUNT)
             }
+            if (includeBasalRate) add(BasalMetabolicRateRecord.BASAL_CALORIES_TOTAL)
             if (includeIntensity) {
                 add(ActivityIntensityRecord.MODERATE_DURATION_TOTAL)
                 add(ActivityIntensityRecord.VIGOROUS_DURATION_TOTAL)
             }
         }
         val otherMetrics = buildSet<AggregateMetric<*>> {
-            if (includeBasalRate) add(BasalMetabolicRateRecord.BASAL_CALORIES_TOTAL)
             if (includeNutrition) {
                 add(NutritionRecord.ENERGY_TOTAL)
                 add(NutritionRecord.PROTEIN_TOTAL)
