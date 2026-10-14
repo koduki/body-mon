@@ -11,7 +11,7 @@ internal object WearableSourcePolicy {
     private val wearableTypes = setOf(
         StepsRecord::class, DistanceRecord::class, ActiveCaloriesBurnedRecord::class,
         ExerciseSessionRecord::class, SleepSessionRecord::class, HeartRateRecord::class,
-        ActivityIntensityRecord::class, BasalMetabolicRateRecord::class,
+        ActivityIntensityRecord::class, BasalMetabolicRateRecord::class, TotalCaloriesBurnedRecord::class,
     )
     fun originsFor(type: KClass<out Record>): Set<DataOrigin> =
         if (type in wearableTypes) origins else emptySet()

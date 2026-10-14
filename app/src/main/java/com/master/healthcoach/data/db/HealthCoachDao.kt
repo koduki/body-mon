@@ -50,7 +50,7 @@ interface HealthCoachDao {
     @Query("SELECT * FROM nutrition_meals ORDER BY startEpochMillis DESC LIMIT :limit")
     fun observeNutritionMeals(limit: Int = 2000): Flow<List<NutritionMealEntity>>
 
-    @Query("SELECT * FROM exercise_sessions WHERE startEpochMillis BETWEEN :from AND :to ORDER BY startEpochMillis")
+    @Query("SELECT * FROM exercise_sessions WHERE startEpochMillis <= :to AND endEpochMillis > :from ORDER BY startEpochMillis")
     suspend fun getExerciseSessions(from: Long, to: Long): List<ExerciseSessionEntity>
 
     @Query("SELECT * FROM nutrition_meals WHERE startEpochMillis BETWEEN :from AND :to ORDER BY startEpochMillis")
@@ -85,7 +85,7 @@ interface HealthCoachDao {
 
     @Query(
         "DELETE FROM exercise_sessions " +
-                "WHERE startEpochMillis >= :from AND startEpochMillis < :toExclusive",
+                "WHERE endEpochMillis > :from AND startEpochMillis < :toExclusive",
     )
     suspend fun deleteExerciseSessionsInRange(from: Long, toExclusive: Long)
 
