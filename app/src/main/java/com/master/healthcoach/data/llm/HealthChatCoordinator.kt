@@ -13,6 +13,7 @@ import java.time.Instant
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -97,6 +98,7 @@ class HealthChatCoordinator(
             repository.diagnostics?.event("chat", "failure", (System.nanoTime() - operationStarted) / 1_000_000, messageId.toString(), error = e)
             throw e
         }
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val answer = ChatHistoryPolicy.stripLeadingTimestampTag(modelAnswer)
         val answerId = repository.addMessage(
             "assistant", answer,

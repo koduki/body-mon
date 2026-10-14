@@ -20,6 +20,8 @@ import com.master.healthcoach.data.security.SecureApiKeyStore
 import com.master.healthcoach.domain.AdviceResponse
 import com.master.healthcoach.domain.WeeklySnapshot
 import java.time.LocalDate
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -46,6 +48,8 @@ data class MainUiState(
     val corePermissions: Set<String> = emptySet(),
     val isSyncing: Boolean = false,
     val isSending: Boolean = false,
+    val isChatGenerating: Boolean = false,
+    val chatError: String? = null,
     val isExporting: Boolean = false,
     val apiKeyConfigured: Boolean = false,
     val modelId: String = SecureApiKeyStore.DEFAULT_MODEL,
@@ -175,25 +179,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         update { it.copy(apiKeyConfigured = false, message = "APIキーを削除しました") }
     }
 
+    private var chatJob: Job? = null
+
     fun sendChat(message: String) {
         val attachments = transient.value.chatAttachments
-        if (
-            (message.isBlank() && attachments.isEmpty()) ||
-            transient.value.isSending ||
-            transient.value.isAddingAttachments
-        ) {
-            return
-        }
-        viewModelScope.launch {
-            update { it.copy(isSending = true, message = null) }
-            runCatching { container.chatCoordinator.sendMessage(message, attachments) }
-                .onSuccess {
-                    update { state -> state.copy(chatAttachments = emptyList()) }
-                }
-                .onFailure { error -> update { it.copy(message = error.userMessage()) } }
-            update { it.copy(isSending = false) }
+        if ((message.isBlank() && attachments.isEmpty()) || transient.value.isSending || transient.value.isAddingAttachments) return
+        update { it.copy(isSending = true, isChatGenerating = true, chatError = null, message = null) }
+        chatJob = viewModelScope.launch {
+            try {
+                container.chatCoordinator.sendMessage(message, attachments)
+                update { it.copy(chatAttachments = emptyList()) }
+            } catch (e: CancellationException) {
+                update { it.copy(message = "生成を停止しました") }
+                throw e
+            } catch (e: Exception) {
+                update { it.copy(chatError = e.userMessage()) }
+            } finally {
+                update { it.copy(isSending = false, isChatGenerating = false) }
+                chatJob = null
+            }
         }
     }
+
+    fun stopChat() { chatJob?.cancel() }
 
     fun addChatAttachments(uris: List<Uri>) {
         if (
