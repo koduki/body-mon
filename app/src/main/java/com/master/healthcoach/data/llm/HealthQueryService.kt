@@ -194,7 +194,7 @@ class HealthQueryService(
         val measuredDates = items.filter { it.exerciseSessionCount > 0 }.map { it.date }.toSet()
         return buildJsonObject {
             putChronologyHeader(from, to, measuredDates)
-            put("sessions", items.sumOf { it.exerciseSessionCount })
+            put("sessions", sessions.map { it.recordId }.distinct().size)
             put("minutes", items.sumOf { it.exerciseMinutes })
             put("strengthMinutes", items.sumOf { it.strengthMinutes })
             put("morningRoutineMinutes", items.sumOf { it.morningRoutineMinutes })
@@ -231,6 +231,11 @@ class HealthQueryService(
                         put("exercise", session.exerciseLabel)
                         put("category", session.category)
                         put("durationMinutes", session.durationMinutes)
+                        put("endEpochMillis", session.endEpochMillis)
+                        val rangeStart = from.atStartOfDay(zoneIdProvider()).toInstant().toEpochMilli()
+                        val rangeEnd = to.plusDays(1).atStartOfDay(zoneIdProvider()).toInstant().toEpochMilli()
+                        put("minutesInRequestedPeriod", ((minOf(session.endEpochMillis, rangeEnd) - maxOf(session.startEpochMillis, rangeStart)).coerceAtLeast(0) / 60_000))
+                        put("intervalInterpretation", "original_session_times; daily_minutes_are_clipped_to_each_day")
                     })
                 }
             })

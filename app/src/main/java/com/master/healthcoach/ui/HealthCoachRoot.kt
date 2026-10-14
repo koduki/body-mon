@@ -335,7 +335,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
     val todayStart = today.atStartOfDay(zoneId).toInstant().toEpochMilli()
     val tomorrowStart = today.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
     val todaySessions = state.exerciseSessions.filter {
-        it.startEpochMillis in todayStart until tomorrowStart
+        it.startEpochMillis < tomorrowStart && it.endEpochMillis > todayStart
     }
     val todayMeals = state.nutritionMeals
         .filter { it.date == todayStr }
@@ -526,7 +526,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 MetricCard(
                     "基礎代謝",
                     todayDaily?.basalCaloriesKcal.kcal(),
-                    "Health Connect集計・参考",
+                    "Mi Fitnessの元記録・kcal/日",
                     Modifier.weight(1f),
                 )
             }
@@ -815,7 +815,8 @@ private fun TrendsScreen(state: MainUiState) {
             val sessions = state.exerciseSessions.filter {
                 val date = Instant.ofEpochMilli(it.startEpochMillis)
                     .atZone(ZoneId.systemDefault()).toLocalDate()
-                date in start..end
+                it.startEpochMillis < end.plusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() &&
+                    it.endEpochMillis > start.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
             }
 
             LazyColumn(
@@ -1976,7 +1977,7 @@ private fun SettingsScreen(
         if (state.sources.isEmpty()) Text("同期後に診断結果が表示されます。")
         if (!state.grantedPermissions.containsAll(state.requiredPermissions)) {
             Button(onClick = onRequestPermissions, modifier = Modifier.fillMaxWidth()) {
-                Text("睡眠・心拍・栄養・履歴などの権限を許可")
+                Text("総消費・睡眠・心拍などの権限を許可")
             }
         }
         OutlinedButton(onClick = onOpenHealthConnect, modifier = Modifier.fillMaxWidth()) {
