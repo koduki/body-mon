@@ -22,6 +22,7 @@ import com.master.healthcoach.data.db.WeeklyReportEntity
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.data.health.HealthConnectGateway
 import com.master.healthcoach.data.llm.ChatHistoryPolicy
+import com.master.healthcoach.domain.EnergyModel
 import com.master.healthcoach.domain.HealthDataExporter
 import com.master.healthcoach.domain.WeeklyReportBuilder
 import com.master.healthcoach.domain.WeeklySnapshot
@@ -267,6 +268,37 @@ class HealthRepository(
             conversationMemory = dao.getMemory(),
         )
         return HealthDataExporter.encodeToJson(payload)
+    }
+
+    suspend fun exportWeeklyAiJson(
+        exportedAt: ZonedDateTime = ZonedDateTime.now(),
+    ): String {
+        val zoneId = exportedAt.zone
+        val today = exportedAt.toLocalDate()
+        val (from, to) = HealthDataExporter.weeklyDateRange(today)
+        val (startMillis, endMillis) = HealthDataExporter.epochRange(from, to, zoneId)
+        val bodyFrom = from.minusDays(EnergyModel.WEIGHT_FALLBACK_DAYS)
+        val weeklyEntity = rebuildWeekly(today)
+        val goal = dao.getGoal()
+        val weeklySnapshot = runCatching {
+            json.decodeFromString<WeeklySnapshot>(weeklyEntity.snapshotJson)
+        }.getOrNull() ?: WeeklyReportBuilder.build(
+            today = today,
+            daily = dao.getDaily(today.minusDays(89).toString(), today.toString()),
+            body = dao.getBody(today.minusDays(89).toString(), today.toString()),
+            goal = goal,
+            zoneId = zoneId,
+        )
+        val payload = HealthDataExporter.buildWeeklyAiPayload(
+            exportedAt = exportedAt,
+            daily = dao.getDaily(from.toString(), to.toString()),
+            body = dao.getBody(bodyFrom.toString(), to.toString()),
+            exerciseSessions = dao.getExerciseSessions(startMillis, endMillis),
+            nutritionMeals = dao.getNutritionMeals(startMillis, endMillis),
+            goal = goal,
+            weeklySnapshot = weeklySnapshot,
+        )
+        return HealthDataExporter.encodeWeeklyAiToJson(payload)
     }
 
     suspend fun clearAll() {

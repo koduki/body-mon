@@ -283,6 +283,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun exportWeeklyDataToUri(uri: Uri) {
+        if (transient.value.isExporting) return
+        viewModelScope.launch {
+            update { it.copy(isExporting = true, message = null) }
+            runCatching {
+                val jsonText = repository.exportWeeklyAiJson()
+                withContext(Dispatchers.IO) {
+                    val stream = getApplication<Application>().contentResolver
+                        .openOutputStream(uri, "wt")
+                        ?: error("保存先のファイルを開けませんでした")
+                    stream.bufferedWriter(Charsets.UTF_8).use { writer ->
+                        writer.write(jsonText)
+                    }
+                }
+            }.onSuccess {
+                update {
+                    it.copy(message = "別AI分析用の週報JSONをエクスポートしました")
+                }
+            }.onFailure { error ->
+                update { it.copy(message = error.userMessage()) }
+            }
+            update { it.copy(isExporting = false) }
+        }
+    }
+
     fun clearLocalData() {
         viewModelScope.launch {
             runCatching {

@@ -157,6 +157,7 @@ fun HealthCoachRoot(
     onAddChatAttachments: (List<Uri>) -> Unit,
     onRemoveChatAttachment: (String) -> Unit,
     onAnalyzeWeek: () -> Unit,
+    onExportWeeklyData: (Uri) -> Unit = {},
     onExportData: (Uri) -> Unit = {},
     onConfirmNutritionComplete: (String, Boolean) -> Unit = { _, _ -> },
     onClearLocalData: () -> Unit,
@@ -233,7 +234,7 @@ fun HealthCoachRoot(
                 when (selectedTab) {
                     AppTab.TODAY -> DashboardScreen(state, onSync)
                     AppTab.TRENDS -> TrendsScreen(state)
-                    AppTab.WEEKLY -> WeeklyScreen(state, onAnalyzeWeek)
+                    AppTab.WEEKLY -> WeeklyScreen(state, onAnalyzeWeek, onExportWeeklyData)
                     AppTab.CHAT -> ChatScreen(
                         state = state,
                         onSendChat = onSendChat,
@@ -1160,8 +1161,19 @@ private fun TrendsScreen(state: MainUiState) {
 }
 
 @Composable
-private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
+private fun WeeklyScreen(
+    state: MainUiState,
+    onAnalyzeWeek: () -> Unit,
+    onExportWeeklyData: (Uri) -> Unit = {},
+) {
     val report = state.weekly
+    val weeklyExportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri != null) {
+            onExportWeeklyData(uri)
+        }
+    }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp, 10.dp, 16.dp, 28.dp),
@@ -1177,6 +1189,26 @@ private fun WeeklyScreen(state: MainUiState, onAnalyzeWeek: () -> Unit) {
         if (report == null) {
             item { EmptyCard("週報はまだありません", "Health Connectを同期すると自動作成されます") }
         } else {
+            item {
+                FilledTonalButton(
+                    onClick = {
+                        weeklyExportLauncher.launch(HealthDataExporter.defaultWeeklyFileName())
+                    },
+                    enabled = !state.isExporting,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (state.isExporting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        Icon(Icons.Default.Description, contentDescription = null)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text("週報JSONを保存（別AI分析用）")
+                }
+            }
             item {
                 Card(
                     colors = CardDefaults.cardColors(

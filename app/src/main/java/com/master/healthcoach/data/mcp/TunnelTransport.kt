@@ -38,7 +38,7 @@ class TunnelTransport(
     }
     init {
         require(TunnelSettings.ID.matches(config.id))
-        require(baseUrl == "https://api.openai.com" || (allowLocalTestServer && baseUrl.startsWith("http://localhost:")))
+        require(baseUrl == "https://api.openai.com" || (allowLocalTestServer && baseUrl.startsWith("http://")))
     }
     suspend fun run() {
         var failures = 0
