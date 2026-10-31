@@ -296,13 +296,14 @@ class HealthDataExporterTest {
     }
 
     @Test
-    fun `builds weekly AI payload with 7-day formatted details, goal, context, and no chat history`() {
-        val outOfWeekDate = LocalDate.of(2026, 10, 6) // 8 days ago
-        val weekStartDate = LocalDate.of(2026, 10, 7) // 7-day window start
-        val todayDate = LocalDate.of(2026, 10, 13)
+    fun `builds weekly AI payload with completed 7-day details, todayPartial, dataQuality, and no chat history`() {
+        val outOfWeekDate = LocalDate.of(2026, 10, 5) // 8 days ago (before completed 7-day window)
+        val weekStartDate = LocalDate.of(2026, 10, 6) // Completed 7-day window start
+        val yesterdayDate = LocalDate.of(2026, 10, 12) // Completed 7-day window end
+        val todayDate = LocalDate.of(2026, 10, 13) // Today (in-progress partial data)
 
-        val sleepStartEpoch = LocalDate.of(2026, 10, 12).atTime(23, 30).atZone(zone).toInstant().toEpochMilli()
-        val sleepEndEpoch = todayDate.atTime(6, 30).atZone(zone).toInstant().toEpochMilli()
+        val sleepStartEpoch = LocalDate.of(2026, 10, 11).atTime(23, 30).atZone(zone).toInstant().toEpochMilli()
+        val sleepEndEpoch = yesterdayDate.atTime(6, 30).atZone(zone).toInstant().toEpochMilli()
 
         val daily = listOf(
             DailyHealthSummaryEntity(
@@ -332,15 +333,52 @@ class HealthDataExporterTest {
                 dataOrigins = "com.health",
                 updatedAtEpochMillis = 1_000L,
             ),
+            // Day inside completed 7-day window with empty_placeholder nutrition and workout-only HR
             DailyHealthSummaryEntity(
-                date = todayDate.toString(),
+                date = weekStartDate.toString(),
+                steps = 8_500L,
+                distanceMeters = 6_000.0,
+                activeCaloriesKcal = 350.0,
+                exerciseMinutes = 40L,
+                strengthMinutes = 0L,
+                morningRoutineMinutes = 0L,
+                cardioMinutes = 10L,
+                exerciseSessionCount = 1,
+                sleepMinutes = 370L,
+                sleepSessionMinutes = 390L,
+                sleepDurationSource = "sleep_stages",
+                sleepHeartRateAverageBpm = null,
+                moderateIntensityMinutes = null,
+                vigorousIntensityMinutes = null,
+                heartRateAverageBpm = 112L,
+                heartRateMinimumBpm = 80L,
+                heartRateMaximumBpm = 155L,
+                heartRateMeasurementCount = 40L,
+                heartRateCoverageMinutes = 35,
+                heartRateOutsideExerciseSamples = 0,
+                basalCaloriesKcal = 1500.0,
+                intakeCaloriesKcal = null,
+                proteinGrams = null,
+                totalFatGrams = null,
+                carbohydrateGrams = null,
+                mealCount = 0,
+                nutritionComplete = false,
+                nutritionRecordStatus = "empty_placeholder",
+                dataOrigins = "com.mi.health, jp.asken",
+                updatedAtEpochMillis = 1_500L,
+            ),
+            // Yesterday (end of completed 7-day window)
+            DailyHealthSummaryEntity(
+                date = yesterdayDate.toString(),
                 steps = 10_000L,
                 distanceMeters = 7_000.0,
                 activeCaloriesKcal = 420.0,
-                exerciseMinutes = 35L,
+                exerciseMinutes = 65L,
                 strengthMinutes = 0L,
                 morningRoutineMinutes = 5L,
                 cardioMinutes = 35L,
+                hikingMinutes = 20L,
+                hiitMinutes = 10L,
                 exerciseSessionCount = 2,
                 sleepMinutes = 390L,
                 sleepSessionMinutes = 420L,
@@ -351,10 +389,12 @@ class HealthDataExporterTest {
                 sleepHeartRateAverageBpm = 56L,
                 moderateIntensityMinutes = 20L,
                 vigorousIntensityMinutes = 10L,
-                heartRateAverageBpm = 73L,
-                heartRateMinimumBpm = 48L,
-                heartRateMaximumBpm = 142L,
+                heartRateAverageBpm = 105L,
+                heartRateMinimumBpm = 66L,
+                heartRateMaximumBpm = 160L,
                 heartRateMeasurementCount = 144L,
+                heartRateCoverageMinutes = 60,
+                heartRateOutsideExerciseSamples = 0,
                 basalCaloriesKcal = 1500.0,
                 intakeCaloriesKcal = 1800.0,
                 proteinGrams = 135.0,
@@ -362,14 +402,43 @@ class HealthDataExporterTest {
                 carbohydrateGrams = 225.0,
                 mealCount = 3,
                 nutritionComplete = true,
+                nutritionRecordStatus = "meal_records_unverified",
                 dataOrigins = "com.mi.health",
                 updatedAtEpochMillis = 2_000L,
             ),
+            // Today (partial morning data - should go to todayPartial, NOT sevenDayDetails)
+            DailyHealthSummaryEntity(
+                date = todayDate.toString(),
+                steps = 125L,
+                distanceMeters = 90.0,
+                activeCaloriesKcal = 22.0,
+                exerciseMinutes = 0L,
+                strengthMinutes = 0L,
+                morningRoutineMinutes = 0L,
+                cardioMinutes = 0L,
+                exerciseSessionCount = 0,
+                sleepMinutes = null,
+                moderateIntensityMinutes = null,
+                vigorousIntensityMinutes = null,
+                heartRateAverageBpm = null,
+                heartRateMinimumBpm = null,
+                heartRateMaximumBpm = null,
+                heartRateMeasurementCount = null,
+                basalCaloriesKcal = 1500.0,
+                intakeCaloriesKcal = null,
+                proteinGrams = null,
+                totalFatGrams = null,
+                carbohydrateGrams = null,
+                mealCount = 0,
+                nutritionComplete = false,
+                nutritionRecordStatus = "no_records",
+                dataOrigins = "com.mi.health",
+                updatedAtEpochMillis = 3_000L,
+            ),
         )
 
-        val bodyMeasuredEpoch = todayDate.atTime(7, 15).atZone(zone).toInstant().toEpochMilli()
+        val bodyMeasuredEpoch = yesterdayDate.atTime(7, 15).atZone(zone).toInstant().toEpochMilli()
         val body = listOf(
-            // Prior week measurement used as fallback if needed, excluded from 7-day details
             BodyCompositionEntity(
                 date = outOfWeekDate.toString(),
                 weightKg = 70.0,
@@ -381,7 +450,7 @@ class HealthDataExporterTest {
                 dataOrigin = "com.eufy",
             ),
             BodyCompositionEntity(
-                date = todayDate.toString(),
+                date = yesterdayDate.toString(),
                 weightKg = 69.2,
                 bodyFatPercent = 19.8,
                 fatMassKg = 13.7,
@@ -392,25 +461,55 @@ class HealthDataExporterTest {
             ),
         )
 
-        val routineStart = todayDate.atTime(6, 45).atZone(zone).toInstant().toEpochMilli()
+        val routineStart = yesterdayDate.atTime(6, 45).atZone(zone).toInstant().toEpochMilli()
+        val otherStart = yesterdayDate.atTime(19, 0).atZone(zone).toInstant().toEpochMilli()
         val sessions = listOf(
             ExerciseSessionEntity(
                 recordId = "routine-1",
                 startEpochMillis = routineStart,
                 endEpochMillis = routineStart + 300_000L,
                 exerciseType = 0,
-                exerciseLabel = "その他のワークアウト",
+                exerciseLabel = "朝トレ候補（短い一般運動）",
                 category = "morning_routine",
                 durationMinutes = 5L,
                 dataOrigin = "com.mi.health",
             ),
+            ExerciseSessionEntity(
+                recordId = "other-1",
+                startEpochMillis = otherStart,
+                endEpochMillis = otherStart + 1_800_000L,
+                exerciseType = 0,
+                exerciseLabel = "一般運動（内容未確認）",
+                category = "other",
+                durationMinutes = 30L,
+                dataOrigin = "com.mi.health",
+            ),
         )
 
-        val breakfastStart = todayDate.atTime(7, 30).atZone(zone).toInstant().toEpochMilli()
+        val breakfastStart = yesterdayDate.atTime(7, 30).atZone(zone).toInstant().toEpochMilli()
+        val emptyPlaceholderStart = weekStartDate.atTime(0, 0).atZone(zone).toInstant().toEpochMilli()
+        val dailySummaryStart = yesterdayDate.atTime(0, 0).atZone(zone).toInstant().toEpochMilli()
         val meals = listOf(
+            // Empty placeholder on weekStartDate -> should be excluded
+            NutritionMealEntity(
+                recordId = "meal-empty",
+                date = weekStartDate.toString(),
+                startEpochMillis = emptyPlaceholderStart,
+                endEpochMillis = emptyPlaceholderStart + 86_399_000L,
+                mealLabel = "日次記録（食事時刻・区分は未取得）",
+                mealType = 0,
+                intakeCaloriesKcal = null,
+                proteinGrams = null,
+                totalFatGrams = null,
+                carbohydrateGrams = null,
+                recordCount = 1,
+                dataOrigin = "jp.asken",
+                isDailyRecord = true,
+            ),
+            // Typed breakfast on yesterdayDate
             NutritionMealEntity(
                 recordId = "meal-1",
-                date = todayDate.toString(),
+                date = yesterdayDate.toString(),
                 startEpochMillis = breakfastStart,
                 endEpochMillis = breakfastStart + 900_000L,
                 mealLabel = "朝食",
@@ -421,6 +520,23 @@ class HealthDataExporterTest {
                 carbohydrateGrams = 62.5,
                 recordCount = 3,
                 dataOrigin = "jp.asken",
+                isDailyRecord = false,
+            ),
+            // Daily summary record -> startTimeLocal and mealType should be masked to null
+            NutritionMealEntity(
+                recordId = "meal-daily",
+                date = yesterdayDate.toString(),
+                startEpochMillis = dailySummaryStart,
+                endEpochMillis = dailySummaryStart + 86_399_000L,
+                mealLabel = "日次記録（食事時刻・区分は未取得）",
+                mealType = 0,
+                intakeCaloriesKcal = 1300.0,
+                proteinGrams = 95.0,
+                totalFatGrams = 30.0,
+                carbohydrateGrams = 162.5,
+                recordCount = 1,
+                dataOrigin = "jp.asken",
+                isDailyRecord = true,
             ),
         )
 
@@ -429,7 +545,8 @@ class HealthDataExporterTest {
             sex = "male",
             heightCm = 172.0,
             dietStartDate = "2026-09-01",
-            deadline = "2026-12-31",
+            deadline = "2026-10-01", // Expired deadline before todayDate (2026-10-13)
+            monthlyWeightLossKg = 1.5,
             targetFatMassKg = 12.0,
             minimumLeanMassKg = 55.0,
             dailySteps = 8000L,
@@ -453,55 +570,109 @@ class HealthDataExporterTest {
             nutritionMeals = meals,
             goal = goal,
             weeklySnapshot = weeklySnapshot,
+            dataRevision = "42",
+            lastSyncSuccessEpochMillis = exportedAt.minusMinutes(5).toInstant().toEpochMilli(),
+            lastSyncOutcome = "success",
         )
 
+        // 1. Period alignment check (completed 7 days: 10/06..10/12, matching weeklySummary)
+        assertEquals(2, payload.schemaVersion)
         assertEquals("weekly_ai_analysis", payload.exportType)
+        assertEquals(todayDate.toString(), payload.todayDate)
         assertEquals(weekStartDate.toString(), payload.weekStart)
-        assertEquals(todayDate.toString(), payload.weekEnd)
-        assertEquals(7, payload.daysIncluded)
-        assertEquals(28, payload.trendWindowDays)
-        assertEquals(goal, payload.goal)
-        assertEquals(weeklySnapshot, payload.weeklySummary)
-        assertTrue(payload.analysisContext.dietPolicy.contains("低脂質ダイエット"))
-        assertTrue(payload.analysisContext.exerciseAndRoutineRules.contains("朝の5分ルーティン"))
+        assertEquals(yesterdayDate.toString(), payload.weekEnd)
+        assertEquals(weeklySnapshot.weekStart, payload.weekStart)
+        assertEquals(weeklySnapshot.weekEnd, payload.weekEnd)
+        assertEquals("completed_7_days_excluding_today", payload.periodType)
+        assertEquals("42", payload.dataRevision)
+        assertEquals("2026-10-13 11:55", payload.lastSyncSuccessLocal)
+        assertEquals("success", payload.lastSyncOutcome)
 
-        assertEquals(1, payload.sevenDayDetails.dailyRecords.size)
-        val dayRecord = payload.sevenDayDetails.dailyRecords.single()
-        assertEquals("2026-10-13", dayRecord.date)
-        assertEquals("今日", dayRecord.relativeDay)
+        // 2. Today's partial data separated into todayPartial
+        assertNotNull(payload.todayPartial)
+        assertEquals("2026-10-13", payload.todayPartial?.date)
+        assertEquals(true, payload.todayPartial?.isPartialDay)
+        assertEquals(125L, payload.todayPartial?.dailyRecord?.steps)
+        assertEquals(22.0, payload.todayPartial?.dailyRecord?.activeCaloriesDeviceKcal)
+
+        // 3. Goal status (expired deadline handling)
+        assertNotNull(payload.goalStatus)
+        assertEquals(true, payload.goalStatus?.deadlineExpired)
+        assertEquals(1.5, payload.goalStatus?.monthlyWeightLossTargetKg)
+
+        // 4. DataQuality checks
+        assertEquals(true, payload.dataQuality.heartRate.allDaysWorkoutOnly)
+        assertEquals(false, payload.dataQuality.heartRate.usableForDailyOrRestingTrend)
+        assertEquals(
+            "workout_only_do_not_use_as_resting_or_daily_hr",
+            payload.dataQuality.heartRate.interpretation,
+        )
+        assertEquals(1, payload.dataQuality.exercise.unverifiedOtherSessions)
+        assertEquals(60L, payload.dataQuality.exercise.unverifiedOtherMinutes) // 30m on 10/6 + 30m on 10/12
+        assertEquals(
+            "unverified_other_workouts_present",
+            payload.dataQuality.exercise.strengthAssessmentStatus,
+        )
+        assertEquals(1, payload.dataQuality.nutrition.emptyPlaceholderDays)
+        assertEquals(1, payload.dataQuality.nutrition.confirmedCompleteDays)
+
+        // 5. SevenDayDetails checks (contains 10/06 and 10/12, excludes 10/05 and 10/13)
+        assertEquals(2, payload.sevenDayDetails.dailyRecords.size)
+        val firstDayRecord = payload.sevenDayDetails.dailyRecords.first()
+        assertEquals("2026-10-06", firstDayRecord.date)
+        assertEquals(null, firstDayRecord.mealCount) // null instead of 0 for empty_placeholder!
+        assertEquals("empty_placeholder", firstDayRecord.nutritionRecordStatus)
+        assertEquals("no_samples_in_main_sleep", firstDayRecord.sleepHeartRateStatus)
+        assertEquals("workout_only_not_resting", firstDayRecord.heartRateInterpretation)
+        assertEquals(30L, firstDayRecord.otherExerciseMinutes)
+
+        val dayRecord = payload.sevenDayDetails.dailyRecords.last()
+        assertEquals("2026-10-12", dayRecord.date)
+        assertEquals("昨日", dayRecord.relativeDay)
         assertEquals(69.2, dayRecord.weightKg)
         assertEquals("07:15", dayRecord.bodyMeasuredAtLocal)
-        assertEquals("2026-10-12 23:30", dayRecord.sleepStartLocal)
-        assertEquals("2026-10-13 06:30", dayRecord.sleepEndLocal)
+        assertEquals("2026-10-11 23:30", dayRecord.sleepStartLocal)
+        assertEquals("2026-10-12 06:30", dayRecord.sleepEndLocal)
         assertEquals(true, dayRecord.meetsSixHourOpportunity)
         assertEquals(56L, dayRecord.sleepHeartRateAverageBpm)
-        assertEquals(73L, dayRecord.heartRateAverageBpm)
-        assertEquals(48L, dayRecord.heartRateMinimumBpm)
-        assertEquals(142L, dayRecord.heartRateMaximumBpm)
-        assertEquals(144L, dayRecord.heartRateMeasurementCount)
-        assertEquals(40L, dayRecord.moderateEquivalentMinutes)
-        assertNotNull(dayRecord.referenceStepModelActiveKcal)
-        assertNotNull(dayRecord.referenceActiveRangeLowKcal)
-        assertNotNull(dayRecord.referenceActiveRangeHighKcal)
-        assertNotNull(dayRecord.referenceEnergyBalanceLowKcal)
-        assertNotNull(dayRecord.referenceEnergyBalanceHighKcal)
+        assertEquals("observed", dayRecord.sleepHeartRateStatus)
+        assertEquals(105L, dayRecord.heartRateAverageBpm)
+        assertEquals("workout_only_not_resting", dayRecord.heartRateInterpretation)
+        assertEquals(30L, dayRecord.otherExerciseMinutes)
+        assertEquals(20L, dayRecord.hikingMinutes)
+        assertEquals(10L, dayRecord.hiitMinutes)
+        assertEquals(3, dayRecord.mealCount)
         assertEquals(30.0, dayRecord.proteinEnergyPercent!!, 0.01)
         assertEquals(20.0, dayRecord.fatEnergyPercent!!, 0.01)
         assertEquals(50.0, dayRecord.carbohydrateEnergyPercent!!, 0.01)
 
-        val sessionExport = payload.sevenDayDetails.exerciseSessions.single()
+        // 6. Exercise sessions & NutritionDetailPolicy checks
+        assertEquals(2, payload.sevenDayDetails.exerciseSessions.size)
+        val sessionExport = payload.sevenDayDetails.exerciseSessions.first()
         assertEquals("06:45", sessionExport.startTimeLocal)
         assertEquals("06:50", sessionExport.endTimeLocal)
-        assertEquals("今日", sessionExport.relativeDay)
+        assertEquals(5L, sessionExport.minutesInRequestedPeriod)
+        assertEquals("昨日", sessionExport.relativeDay)
 
-        val mealExport = payload.sevenDayDetails.nutritionMeals.single()
-        assertEquals("07:30", mealExport.startTimeLocal)
-        assertEquals(32.0, mealExport.proteinEnergyPercent!!, 0.01)
-        assertEquals(18.0, mealExport.fatEnergyPercent!!, 0.01)
+        // Empty placeholder meal was filtered out; 2 valid records remain
+        assertEquals(2, payload.sevenDayDetails.nutritionMeals.size)
+        val typedMeal = payload.sevenDayDetails.nutritionMeals.first { !it.isDailyRecord }
+        assertEquals("07:30", typedMeal.startTimeLocal)
+        assertEquals(1, typedMeal.mealType)
+        assertEquals("typed_meal_record", typedMeal.detailStatus)
+        assertEquals(32.0, typedMeal.proteinEnergyPercent!!, 0.01)
+        assertEquals(18.0, typedMeal.fatEnergyPercent!!, 0.01)
+
+        val dailySummaryMeal = payload.sevenDayDetails.nutritionMeals.first { it.isDailyRecord }
+        assertEquals(null, dailySummaryMeal.startTimeLocal)
+        assertEquals(null, dailySummaryMeal.mealType)
+        assertEquals("daily_summary", dailySummaryMeal.detailStatus)
 
         val jsonString = HealthDataExporter.encodeWeeklyAiToJson(payload)
         assertFalse(jsonString.contains("conversationHistory"))
         assertFalse(jsonString.contains("conversationMemory"))
+        assertFalse(jsonString.contains("recordId"))
+        assertFalse(jsonString.contains("sleepStartEpochMillis"))
         val decoded = Json { ignoreUnknownKeys = true }.decodeFromString<WeeklyAiExportPayload>(jsonString)
         assertEquals(payload, decoded)
     }

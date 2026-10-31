@@ -275,28 +275,35 @@ class HealthRepository(
     ): String {
         val zoneId = exportedAt.zone
         val today = exportedAt.toLocalDate()
-        val (from, to) = HealthDataExporter.weeklyDateRange(today)
-        val (startMillis, endMillis) = HealthDataExporter.epochRange(from, to, zoneId)
-        val bodyFrom = from.minusDays(EnergyModel.WEIGHT_FALLBACK_DAYS)
+        val (weekFrom, _) = HealthDataExporter.weeklyDateRange(today, includeToday = false)
+        val (startMillis, endMillis) = HealthDataExporter.epochRange(weekFrom, today, zoneId)
+        val historyFromStr = today.minusDays(89).toString()
+        val todayStr = today.toString()
+        val allDaily = dao.getDaily(historyFromStr, todayStr)
+        val allBody = dao.getBody(historyFromStr, todayStr)
         val weeklyEntity = rebuildWeekly(today)
         val goal = dao.getGoal()
         val weeklySnapshot = runCatching {
             json.decodeFromString<WeeklySnapshot>(weeklyEntity.snapshotJson)
         }.getOrNull() ?: WeeklyReportBuilder.build(
             today = today,
-            daily = dao.getDaily(today.minusDays(89).toString(), today.toString()),
-            body = dao.getBody(today.minusDays(89).toString(), today.toString()),
+            daily = allDaily,
+            body = allBody,
             goal = goal,
             zoneId = zoneId,
         )
         val payload = HealthDataExporter.buildWeeklyAiPayload(
             exportedAt = exportedAt,
-            daily = dao.getDaily(from.toString(), to.toString()),
-            body = dao.getBody(bodyFrom.toString(), to.toString()),
+            daily = allDaily,
+            body = allBody,
             exerciseSessions = dao.getExerciseSessions(startMillis, endMillis),
             nutritionMeals = dao.getNutritionMeals(startMillis, endMillis),
             goal = goal,
             weeklySnapshot = weeklySnapshot,
+            sources = dao.getSources(),
+            dataRevision = dao.metadata("revision"),
+            lastSyncSuccessEpochMillis = dao.metadata("lastSyncSuccess")?.toLongOrNull(),
+            lastSyncOutcome = dao.metadata("lastSyncOutcome"),
         )
         return HealthDataExporter.encodeWeeklyAiToJson(payload)
     }

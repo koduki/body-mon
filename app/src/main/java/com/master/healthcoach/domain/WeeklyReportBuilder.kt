@@ -158,9 +158,20 @@ object WeeklyReportBuilder {
             stepModelActiveDailyAverage = EnergyModel.summarizeActive(comparableTrendDaily, body, goal?.heightCm, goal?.sex)?.stepModelDailyAverageKcal,
         )
 
+        val totalStrengthMinutes = currentDaily.sumOf { it.strengthMinutes }
+        val totalCardioMinutes = currentDaily.sumOf { it.cardioMinutes }
+        val totalOtherExerciseMinutes = currentDaily.sumOf {
+            (it.exerciseMinutes - it.strengthMinutes - it.cardioMinutes).coerceAtLeast(0L)
+        }
+        val totalHikingMinutes = currentDaily.sumOf { it.hikingMinutes }
+        val totalHiitMinutes = currentDaily.sumOf { it.hiitMinutes }
+
         val limitations = buildList {
             if (goal?.deadline?.let { runCatching { LocalDate.parse(it) }.getOrNull()?.isBefore(today) } == true) {
                 add("目標期限を過ぎています。現在の目標ペース・期限を設定で確認してください")
+            }
+            if (totalStrengthMinutes == 0L && totalOtherExerciseMinutes > 0L) {
+                add("内容未確認の一般運動（Other Workout）があるため、筋トレ0分は筋トレ未実施の確定ではありません")
             }
             if (currentDaily.any { it.intakeCaloriesKcal != null && !it.nutritionComplete }) {
                 add("全食記録済みと確認されていない日は収支・摂取不足の判定を保留します。設定で記録範囲を確認できます")
@@ -223,8 +234,11 @@ object WeeklyReportBuilder {
             ),
             exerciseSessions = currentDaily.sumOf { it.exerciseSessionCount },
             exerciseMinutes = currentDaily.sumOf { it.exerciseMinutes },
-            strengthMinutes = currentDaily.sumOf { it.strengthMinutes },
-            cardioMinutes = currentDaily.sumOf { it.cardioMinutes },
+            strengthMinutes = totalStrengthMinutes,
+            cardioMinutes = totalCardioMinutes,
+            otherExerciseMinutes = totalOtherExerciseMinutes,
+            hikingMinutes = totalHikingMinutes,
+            hiitMinutes = totalHiitMinutes,
             previousWeekStepsDailyAverage = previousStepsAverage,
             previousWeekActiveCaloriesDailyAverage = averageDouble(
                 previousDaily.mapNotNull { it.activeCaloriesKcal },

@@ -148,6 +148,34 @@ class WeeklyReportBuilderTest {
     }
 
     @Test
+    fun `tracks unverified other exercise minutes hiking and hiit and adds limitation when strength is zero`() {
+        val today = LocalDate.of(2026, 8, 20)
+        val daily = listOf(
+            daily(
+                date = today.minusDays(1),
+                strengthMinutes = 0,
+                morningRoutineMinutes = 5,
+            ).copy(
+                exerciseMinutes = 65,
+                cardioMinutes = 35,
+                hikingMinutes = 20,
+                hiitMinutes = 10,
+                exerciseSessionCount = 3,
+            ),
+        )
+
+        val report = WeeklyReportBuilder.build(today, daily, emptyList(), zoneId = zoneId)
+
+        assertEquals(65L, report.exerciseMinutes)
+        assertEquals(0L, report.strengthMinutes)
+        assertEquals(35L, report.cardioMinutes)
+        assertEquals(30L, report.otherExerciseMinutes)
+        assertEquals(20L, report.hikingMinutes)
+        assertEquals(10L, report.hiitMinutes)
+        assertTrue(report.dataLimitations.any { it.contains("内容未確認の一般運動") })
+    }
+
+    @Test
     fun `averages nutrition only from recorded days and does not treat gaps as zero`() {
         val today = LocalDate.of(2026, 7, 30)
         val daily = listOf(

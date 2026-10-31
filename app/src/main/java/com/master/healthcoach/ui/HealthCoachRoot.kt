@@ -1403,7 +1403,9 @@ private fun WeeklyScreen(
                 }
             }
 
-            val weekDaily = state.daily.take(7).reversed()
+            val weekDaily = state.daily
+                .filter { it.date in report.weekStart..report.weekEnd }
+                .sortedBy { it.date }
             if (weekDaily.isNotEmpty()) {
                 item {
                     val stepPoints = weekDaily.map {
