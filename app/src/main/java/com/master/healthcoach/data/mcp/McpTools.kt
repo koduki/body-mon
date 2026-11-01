@@ -10,6 +10,7 @@ object McpTools {
     val all = listOf(
         McpTool("get_app_context", "Read first: schema, timezone, session expiry, sync status and available permissions. No health values.", "basic"),
         McpTool("get_health_metrics", "Read cached health metrics. metric: body/activity/exercise/sleep/heart_rate/intensity/metabolism/nutrition. Dates YYYY-MM-DD, at most 90 days. limit is days per page (1..7). Today is partial. Follow nextCursor.", "health", dates + page + mapOf("metric" to "string"), listOf("metric")),
+        McpTool("get_workout_hr_comparison", "For the completed 28 days ending at 'to' (defaults to yesterday), compare workout heart averages for same exerciseType and approx. duration, and return guarded recovery statistics. Pace/power and conditions are NOT matched; never infer VO2max.", "health", mapOf("to" to "string")),
         McpTool("get_heart_rate_series", "Paged local Xiaomi HR samples, linked to recorded workouts/post-workout recovery when possible. resolutionMinutes=0 returns raw points; 1..60 returns observed minute-bucket statistics. from/to date filter; optional exact sessionId; limit 1..500, follow nextCursor. Unclassified means NOT proven resting. Only after app sync, no interpolated gaps.", "health",
             dates + page + mapOf("sessionId" to "string", "resolutionMinutes" to "integer")),
         McpTool("get_profile_and_goals", "Current user profile and goals; settings can be updated by the user in the app. Read only.", "health"),
