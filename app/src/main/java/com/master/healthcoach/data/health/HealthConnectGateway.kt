@@ -619,7 +619,7 @@ class HealthConnectGateway(private val context: Context) {
                 .map { WorkoutHeartAnalytics.Heart(it.time.toEpochMilli(), it.beatsPerMinute) }
                 .filter { it.timeMs >= workout.startMs && it.timeMs <= workout.endMs + WorkoutHeartAnalytics.RECOVERY_WINDOW_MS }
                 .toList()
-            val heart = WorkoutHeartAnalytics.recovery(workout, relatedHeart)
+            val heart = WorkoutHeartAnalytics.recovery(workout, relatedHeart, workoutsForAssociation)
             val origin = session.metadata.dataOrigin.packageName
             ExerciseSessionEntity(
                 recordId = "$origin:${session.metadata.id}",

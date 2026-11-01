@@ -71,7 +71,15 @@ class HealthMcpBackend(
                             it.startEpochMillis, it.workoutHeartCoverageMinutes ?: 0,
                         )
                     }, endExclusiveMs)
-                    val measuredDrops = rows.mapNotNull { it.recoveryDrop1MinBpm }
+val allWindows = rows.map {
+                        WorkoutHeartAnalytics.Workout(it.recordId, it.startEpochMillis, it.endEpochMillis, it.exerciseType)
+                    }
+                    val measuredDrops = rows.mapNotNull { item ->
+                        val window = WorkoutHeartAnalytics.Workout(item.recordId, item.startEpochMillis, item.endEpochMillis, item.exerciseType)
+                        item.recoveryDrop1MinBpm?.takeIf {
+                            WorkoutHeartAnalytics.recoveryWindowClear(window, allWindows, 75_000L)
+                        }
+                    }
                     effectiveFrom = analysisFrom.toString(); effectiveTo = periodEnd.toString()
                     buildJsonObject {
                         put("periodStart", analysisFrom.toString())
@@ -272,11 +280,15 @@ class HealthMcpBackend(
         if (end >= LocalDate.now() || end < LocalDate.now().minusDays(89)) throw McpFailure("INVALID_RANGE")
         val daily = repository.getDaily(end.minusDays(89), end)
         val body = repository.getBody(end.minusDays(89), end)
-        val goal = dao.getGoal()
+val goal = dao.getGoal()
+        val zone = ZoneId.systemDefault()
+        val fromMs = end.minusDays(27).atStartOfDay(zone).toInstant().toEpochMilli()
+        val toMs = end.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+        val sessions = dao.getExerciseSessions(fromMs, toMs)
         return buildJsonObject {
             put("reportMode", "reconstructed"); put("commitSha", BuildConfig.COMMIT_SHA); put("policyVersion", ConversationContextPolicy.VERSION)
-            put("snapshot", json.encodeToJsonElement(WeeklyReportBuilder.build(end.plusDays(1), daily, body, goal)))
-            if (inputs) put("inputs", buildJsonObject { put("daily", json.encodeToJsonElement(daily)); put("body", json.encodeToJsonElement(body)); put("goal", json.encodeToJsonElement(goal)) })
+            put("snapshot", json.encodeToJsonElement(WeeklyReportBuilder.build(end.plusDays(1), daily, body, goal, exerciseSessions = sessions)))
+            if (inputs) put("inputs", buildJsonObject { put("daily", json.encodeToJsonElement(daily)); put("body", json.encodeToJsonElement(body)); put("goal", json.encodeToJsonElement(goal)); put("exerciseSessions", json.encodeToJsonElement(sessions)) })
             put("limitations", "Current stored inputs and current calculation rules, not historical originals. See snapshot dataLimitations for inclusion/exclusion and coverage.")
         }
     }

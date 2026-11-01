@@ -178,7 +178,18 @@ object WeeklyReportBuilder {
         val weekWorkouts = exerciseSessions.filter {
             it.startEpochMillis >= finishedWeekStartMs && it.startEpochMillis < finishedWeekEndMs
         }
-        val recovered = weekWorkouts.mapNotNull { it.recoveryDrop1MinBpm }
+        // Guard previously stored sessions too, not only newly synced records.
+        // A subsequent workout within the recovery observation window makes
+        // that measurement a follow-on exercise signal, not HR recovery.
+        val allWorkoutWindows = exerciseSessions.map {
+            WorkoutHeartAnalytics.Workout(it.recordId, it.startEpochMillis, it.endEpochMillis, it.exerciseType)
+        }
+        val recovered = weekWorkouts.mapNotNull { item ->
+            val workout = WorkoutHeartAnalytics.Workout(item.recordId, item.startEpochMillis, item.endEpochMillis, item.exerciseType)
+            item.recoveryDrop1MinBpm?.takeIf {
+                WorkoutHeartAnalytics.recoveryWindowClear(workout, allWorkoutWindows, 75_000L)
+            }
+        }
         val comparisons = WorkoutHeartAnalytics.compare28Days(
             exerciseSessions.map { item ->
                 WorkoutHeartAnalytics.ComparableWorkout(

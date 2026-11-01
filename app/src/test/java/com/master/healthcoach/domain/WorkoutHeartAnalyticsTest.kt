@@ -36,6 +36,43 @@ class WorkoutHeartAnalyticsTest {
         assertNull(WorkoutHeartAnalytics.recovery(workout, listOf(WorkoutHeartAnalytics.Heart(9 * m + 45_000, 160))).drop1MinBpm)
     }
 
+
+    @Test fun `subsequent workout invalidates measured recovery even when HR points exist`() {
+        val workout = WorkoutHeartAnalytics.Workout("morning", 0, 10 * m, 0)
+        val next = WorkoutHeartAnalytics.Workout("run", 10 * m + 8_000, 20 * m, 56)
+        val samples = (0 until 10).flatMap { i ->
+            listOf(WorkoutHeartAnalytics.Heart(i * m + 10_000, 140),
+                WorkoutHeartAnalytics.Heart(i * m + 45_000, if (i == 9) 160 else 140))
+        } + listOf(
+            WorkoutHeartAnalytics.Heart(10 * m + 50_000, 170),
+            WorkoutHeartAnalytics.Heart(10 * m + 65_000, 170),
+            WorkoutHeartAnalytics.Heart(11 * m + 50_000, 175),
+            WorkoutHeartAnalytics.Heart(11 * m + 65_000, 175),
+        )
+        val wrong = WorkoutHeartAnalytics.recovery(workout, samples)
+        assertEquals(-20, wrong.drop1MinBpm)
+        val corrected = WorkoutHeartAnalytics.recovery(workout, samples, listOf(workout, next))
+        assertNull(corrected.drop1MinBpm)
+        assertNull(corrected.drop2MinBpm)
+        assertEquals(wrong.heartAverageBpm, corrected.heartAverageBpm)
+    }
+
+    @Test fun `first minute can be valid when the next exercise starts after it`() {
+        val workout = WorkoutHeartAnalytics.Workout("walk", 0, 10 * m, 79)
+        val next = WorkoutHeartAnalytics.Workout("run", 10 * m + 90_000, 20 * m, 56)
+        assertTrue(WorkoutHeartAnalytics.recoveryWindowClear(workout, listOf(workout, next), 75_000L))
+        assertFalse(WorkoutHeartAnalytics.recoveryWindowClear(workout, listOf(workout, next), 135_000L))
+    }
+
+    @Test fun `unknown other workouts are excluded from a 28-day trend`() {
+        val end = 28L * 86_400_000L
+        val other = listOf(1, 2, 10, 12).map { d ->
+            WorkoutHeartAnalytics.ComparableWorkout(0, 20, 110.0,
+                end - d * 86_400_000L, 20)
+        }
+        assertTrue(WorkoutHeartAnalytics.compare28Days(other, end).isEmpty())
+    }
+
     @Test fun `28 day comparisons match type and approximate duration but not effort`() {
         val end = 28L * 86_400_000L
         fun workout(daysAgo: Int, duration: Long, hr: Double, type: Int = 1) =

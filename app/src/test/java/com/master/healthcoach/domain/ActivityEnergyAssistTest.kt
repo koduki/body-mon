@@ -48,6 +48,20 @@ class ActivityEnergyAssistTest {
         assertEquals(10, withHeart.sessions.getValue("run").heartObservedMinutes)
     }
 
+    @Test fun `partial clock-minute bins do not inflate observed workout duration`() {
+        val s = session("run", 50_000, 170_000, ActivityEnergyAssist.Activity.RUNNING)
+        val heart = listOf(55_000L, 65_000L, 125_000L, 165_000L)
+            .map { ActivityEnergyAssist.Heart(it, 155L) }
+        val result = ActivityEnergyAssist.estimate(
+            0, h, 78.0, 172.0, "male", 41, 0,
+            emptyList(), listOf(s), heart,
+        )!!
+        assertEquals(2, result.heartObservedMinutes)
+        assertEquals(2, result.heartAdjustedMinutes)
+        assertEquals(2, result.observedZoneMinutes.sum())
+        assertEquals(2, result.sessions.getValue("run").heartObservedMinutes)
+    }
+
     @Test fun `single heart artefact does not modify MET energy`() {
         val s = session("walk", 0, 20 * m, ActivityEnergyAssist.Activity.WALKING)
         val small = listOf(ActivityEnergyAssist.Heart(0, 200L))
