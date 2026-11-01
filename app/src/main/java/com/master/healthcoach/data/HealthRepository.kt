@@ -136,11 +136,16 @@ class HealthRepository(
         val from = today.minusDays(89).toString()
         val daily = dao.getDaily(from, today.toString())
         val body = dao.getBody(from, today.toString())
+        val ended = today.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         val snapshot = WeeklyReportBuilder.build(
             today = today,
             daily = daily,
             body = body,
             goal = dao.getGoal(),
+            exerciseSessions = dao.getExerciseSessions(
+                today.minusDays(28).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
+                ended - 1,
+            ),
         )
         WeeklyReportEntity(
             weekStart = snapshot.weekStart,
