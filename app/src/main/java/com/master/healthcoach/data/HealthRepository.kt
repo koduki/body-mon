@@ -15,6 +15,7 @@ import com.master.healthcoach.data.db.ConversationMemoryEntity
 import com.master.healthcoach.data.db.DailyHealthSummaryEntity
 import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.data.db.ExerciseSessionEntity
+import com.master.healthcoach.data.db.HeartRateSampleEntity
 import com.master.healthcoach.data.db.HealthCoachDatabase
 import com.master.healthcoach.data.db.HealthSourceStatusEntity
 import com.master.healthcoach.data.db.NutritionMealEntity
@@ -112,13 +113,22 @@ class HealthRepository(
                 bundle.rangeEndEpochMillisExclusive,
             )
             dao.upsertExerciseSessions(bundle.exerciseSessions)
+            dao.deleteHeartRateSamplesInRange(
+                bundle.rangeStartEpochMillis,
+                bundle.rangeEndEpochMillisExclusive,
+            )
+            // Insert in bounded batches to avoid SQLite bind/transaction overhead.
+            bundle.heartRateSamples.chunked(500).forEach { dao.upsertHeartRateSamples(it) }
+            val keepFrom = today.minusDays(89).atStartOfDay(ZoneId.systemDefault())
+                .toInstant().toEpochMilli()
+            dao.pruneHeartRateSamples(keepFrom)
             dao.deleteNutritionMealsInRange(
                 bundle.rangeStartEpochMillis,
                 bundle.rangeEndEpochMillisExclusive,
             )
             dao.upsertNutritionMeals(bundle.nutritionMeals)
         }
-        diagnostics?.event("sync", "success", counters = mapOf("days" to bundle.daily.size.toLong(), "body" to bundle.body.size.toLong(), "sessions" to bundle.exerciseSessions.size.toLong(), "meals" to bundle.nutritionMeals.size.toLong()))
+        diagnostics?.event("sync", "success", counters = mapOf("days" to bundle.daily.size.toLong(), "body" to bundle.body.size.toLong(), "sessions" to bundle.exerciseSessions.size.toLong(), "heartSamples" to bundle.heartRateSamples.size.toLong(), "meals" to bundle.nutritionMeals.size.toLong()))
         return rebuildWeekly()
     }
 
@@ -164,6 +174,12 @@ class HealthRepository(
     }
     suspend fun getGoal(): GoalEntity? = dao.getGoal()
     suspend fun getLatestWeekly(): WeeklyReportEntity? = dao.getLatestWeekly()
+
+    suspend fun heartSamples(fromMs: Long, toExclusiveMs: Long, sessionId: String = ""): List<HeartRateSampleEntity> {
+        // Only use this for bounded windows. Large streams must use paged MCP queries.
+        require(toExclusiveMs > fromMs && toExclusiveMs - fromMs <= 7 * 86_400_000L)
+        return dao.pageHeartSamples(fromMs, toExclusiveMs, sessionId, Long.MIN_VALUE, "", -1L, 150_000)
+    }
 
     suspend fun getDaily(from: LocalDate, to: LocalDate) =
         dao.getDaily(from.toString(), to.toString())
@@ -320,6 +336,7 @@ class HealthRepository(
             dao.clearBody()
             dao.clearSources()
             dao.clearExerciseSessions()
+            dao.clearHeartRateSamples()
             dao.clearNutritionMeals()
             dao.clearGoals()
             dao.clearWeekly()
