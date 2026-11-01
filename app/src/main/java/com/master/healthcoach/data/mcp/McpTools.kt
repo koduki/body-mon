@@ -10,6 +10,8 @@ object McpTools {
     val all = listOf(
         McpTool("get_app_context", "Read first: schema, timezone, session expiry, sync status and available permissions. No health values.", "basic"),
         McpTool("get_health_metrics", "Read cached health metrics. metric: body/activity/exercise/sleep/heart_rate/intensity/metabolism/nutrition. Dates YYYY-MM-DD, at most 90 days. limit is days per page (1..7). Today is partial. Follow nextCursor.", "health", dates + page + mapOf("metric" to "string"), listOf("metric")),
+        McpTool("get_heart_rate_series", "Paged local Xiaomi HR samples, linked to recorded workouts/post-workout recovery when possible. resolutionMinutes=0 returns raw points; 1..60 returns observed minute-bucket statistics. from/to date filter; optional exact sessionId; limit 1..500, follow nextCursor. Unclassified means NOT proven resting. Only after app sync, no interpolated gaps.", "health",
+            dates + page + mapOf("sessionId" to "string", "resolutionMinutes" to "integer")),
         McpTool("get_profile_and_goals", "Current user profile and goals; settings can be updated by the user in the app. Read only.", "health"),
         McpTool("list_weekly_reports", "Saved report snapshots, at most 90 days, limit 1..100; follow nextCursor. Legacy weekly cache has limited historical coverage.", "health", dates + page),
         McpTool("get_weekly_report", "Get saved reportId, latest cache, or explicitly reconstruct a completed week using periodEnd YYYY-MM-DD. Reconstructed is not the original historical report.", "health", mapOf("reportId" to "string", "periodEnd" to "string")),
