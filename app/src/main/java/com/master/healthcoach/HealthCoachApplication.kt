@@ -3,6 +3,8 @@ package com.master.healthcoach
 import android.app.Application
 import com.master.healthcoach.data.HealthRepository
 import com.master.healthcoach.data.db.HealthCoachDatabase
+import com.master.healthcoach.data.diagnostics.DiagnosticsStore
+import com.master.healthcoach.data.diagnostics.LocalFlightRecorder
 import com.master.healthcoach.data.health.HealthConnectGateway
 import com.master.healthcoach.data.llm.GeminiClient
 import com.master.healthcoach.data.llm.HealthChatCoordinator
@@ -18,8 +20,29 @@ class HealthCoachApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        installCrashCheckpointHook()
         SyncScheduler.schedule(this)
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { runCatching { container.diagnostics.prune() } }
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            runCatching {
+                if (container.diagnostics.enabled) {
+                    container.diagnostics.reconcileAndExportStartupExits(this@HealthCoachApplication)
+                }
+                container.diagnostics.prune()
+                container.diagnostics.otlpExporter.flushPending()
+            }
+        }
+    }
+
+    private fun installCrashCheckpointHook() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching {
+                if (this::container.isInitialized && container.diagnostics.enabled) {
+                    container.flightRecorder.recordUncaughtException(throwable, threadName = thread.name)
+                }
+            }
+            previous?.uncaughtException(thread, throwable)
+        }
     }
 }
 
@@ -29,9 +52,10 @@ class AppContainer(application: Application) {
         encodeDefaults = true
         explicitNulls = false
     }
-    val database = HealthCoachDatabase.create(application)
+    val flightRecorder = LocalFlightRecorder(application)
+    val database = HealthCoachDatabase.create(application, flightRecorder)
     val gateway = HealthConnectGateway(application)
-    val diagnostics = com.master.healthcoach.data.diagnostics.DiagnosticsStore(application, database.dao())
+    val diagnostics = DiagnosticsStore(application, database.dao(), flightRecorder)
     val tunnelSettings = com.master.healthcoach.data.mcp.TunnelSettings(application)
     val repository = HealthRepository(database, gateway, json, diagnostics)
     val apiKeyStore = SecureApiKeyStore(application)

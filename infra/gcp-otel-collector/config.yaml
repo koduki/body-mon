@@ -1,0 +1,190 @@
+# OpenTelemetry Collector configuration for body-mon (Google Cloud Run -> Cloud Trace & Cloud Monitoring)
+# Enforces Bearer token authentication at ingress, strict attribute allowlisting, and automatic
+# spanmetrics generation for Crashlytics-grade stability & latency monitoring.
+
+extensions:
+  bearertokenauth:
+    scheme: "Bearer"
+    token: "${env:OTEL_INGEST_TOKEN}"
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: "0.0.0.0:${env:PORT:-8080}"
+        auth:
+          authenticator: bearertokenauth
+
+connectors:
+  spanmetrics:
+    namespace: body_mon
+    histogram:
+      explicit:
+        buckets: [10ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 30s, 60s]
+    dimensions:
+      - name: sync.stage
+      - name: sync.trigger
+      - name: sync.outcome
+      - name: error.kind
+      - name: exit.reason
+      - name: thread.kind
+      - name: chat.stage
+      - name: weekly_ai.stage
+      - name: mcp.tool
+      - name: service.version
+    exemplars:
+      enabled: true
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+    spike_limit_mib: 50
+
+  # Defense-in-depth server-side allowlist: strip any attribute not explicitly approved.
+  # Health measurements, chat content, prompts, and credentials are never permitted.
+  transform/allowlist:
+    error_mode: ignore
+    trace_statements:
+      - context: resource
+        statements:
+          - keep_keys(resource.attributes, [
+              "service.name",
+              "service.version",
+              "service.namespace",
+              "service.instance.id",
+              "git.commit.sha",
+              "os.name",
+              "os.version",
+              "os.sdk_int",
+              "app.session_id",
+              "db.schema_version",
+              "gcp.project_id"
+            ])
+      - context: span
+        statements:
+          - keep_keys(span.attributes, [
+              "sync.trigger",
+              "sync.stage",
+              "sync.outcome",
+              "sync.last_successful_stage",
+              "sync.failed_stage",
+              "hc.availability",
+              "hc.core_granted",
+              "hc.bg_granted",
+              "hc.history_granted",
+              "hc.optional_granted_count",
+              "weekly.archived",
+              "weekly.inputs_bytes",
+              "mcp.tool",
+              "mcp.outcome",
+              "event.category",
+              "event.outcome",
+              "error.kind",
+              "error.type",
+              "error.stage",
+              "thread.kind",
+              "exit.reason",
+              "chat.stage",
+              "weekly_ai.stage",
+              "app.session_id",
+              "app.frames",
+              "app.version",
+              "git.commit.sha",
+              "db.schema_version",
+              "db.from_version",
+              "db.to_version",
+              "db.daily_upserted",
+              "db.body_upserted",
+              "db.sources_upserted",
+              "db.sessions_upserted",
+              "db.heart_samples_upserted",
+              "db.meals_upserted",
+              "sync.days",
+              "records.weight",
+              "records.body_fat",
+              "records.steps",
+              "records.distance",
+              "records.exercise_all",
+              "records.exercise_selected",
+              "records.active_calories",
+              "records.total_calories",
+              "records.sleep",
+              "records.heart_rate_records",
+              "records.heart_rate_samples",
+              "records.basal_rate",
+              "records.intensity",
+              "records.nutrition",
+              "assist.valid_days",
+              "assist.sessions_estimated",
+              "memory.pss_kb",
+              "memory.rss_kb",
+              "memory.heap_used_kb",
+              "memory.heap_free_kb",
+              "memory.heap_max_kb",
+              "process.importance",
+              "exit.status_code",
+              "exit.reason_code",
+              "chat.prefetch_count",
+              "chat.tool_calls",
+              "chat.attachments_count",
+              "days",
+              "body",
+              "sessions",
+              "heartSamples",
+              "meals",
+              "tools",
+              "bytes",
+              "polls",
+              "emptyPolls",
+              "retries",
+              "errors",
+              "batteryStart",
+              "batteryEnd",
+              "chargingStart",
+              "chargingEnd",
+              "cpuMs",
+              "tab"
+            ])
+
+  # Remove duplicate datapoint-level service.name added by spanmetrics so it does not collide
+  # with Google Cloud Monitoring's resource-level service_name label.
+  transform/metrics:
+    error_mode: ignore
+    metric_statements:
+      - context: datapoint
+        statements:
+          - delete_key(datapoint.attributes, "service.name")
+
+  resource:
+    attributes:
+      - key: gcp.project_id
+        value: "${env:GCP_PROJECT_ID:-health-support-ai}"
+        action: upsert
+      - key: service.namespace
+        value: "body-mon"
+        action: upsert
+      - key: service.instance.id
+        value: "${env:K_REVISION:-local-collector}"
+        action: upsert
+
+  batch:
+    send_batch_size: 64
+    send_batch_max_size: 128
+    timeout: 2s
+
+exporters:
+  googlecloud:
+    project: "${env:GCP_PROJECT_ID:-health-support-ai}"
+
+service:
+  extensions: [bearertokenauth]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/allowlist, resource, batch]
+      exporters: [googlecloud, spanmetrics]
+    metrics:
+      receivers: [spanmetrics]
+      processors: [memory_limiter, transform/metrics, resource, batch]
+      exporters: [googlecloud]

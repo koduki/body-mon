@@ -1,9 +1,18 @@
 package com.master.healthcoach.data.mcp
 
+import com.master.healthcoach.data.diagnostics.ParsedTraceContext
+import com.master.healthcoach.data.diagnostics.W3cTraceContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 class McpFailure(val code: String) : IllegalArgumentException(code)
+
+class McpTraceContextElement(val traceContext: ParsedTraceContext) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<McpTraceContextElement>
+}
 
 object McpProtocol {
     const val VERSION = "2025-11-25"
@@ -16,6 +25,8 @@ object McpProtocol {
         if (id == null) return null // notifications never receive JSON-RPC responses
         return try {
             val params = request["params"] as? JsonObject ?: JsonObject(emptyMap())
+            val meta = (params["_meta"] as? JsonObject) ?: (request["_meta"] as? JsonObject)
+            val incomingTrace = W3cTraceContext.parseTraceparent((meta?.get("traceparent") as? JsonPrimitive)?.contentOrNull)
             val result = when (method) {
                 "initialize" -> buildJsonObject {
                     val requested = (params["protocolVersion"] as? JsonPrimitive)?.contentOrNull
@@ -30,7 +41,11 @@ object McpProtocol {
                     val name = (params["name"] as? JsonPrimitive)?.contentOrNull ?: throw McpFailure("INVALID_ARGUMENT")
                     val args = params["arguments"] as? JsonObject ?: JsonObject(emptyMap())
                     try {
-                        val data = execute(name, args)
+                        val data = if (incomingTrace != null) {
+                            withContext(McpTraceContextElement(incomingTrace)) { execute(name, args) }
+                        } else {
+                            execute(name, args)
+                        }
                         if (data.toString().toByteArray().size > 100_000) throw McpFailure("RESULT_TOO_LARGE_REDUCE_RANGE")
                         buildJsonObject {
                             put("content", buildJsonArray { add(buildJsonObject { put("type", "text"); put("text", data.toString()) }) })
