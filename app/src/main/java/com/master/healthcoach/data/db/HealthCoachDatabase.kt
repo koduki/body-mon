@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         DailyHealthSummaryEntity::class,
+        HeartRateSampleEntity::class,
         BodyCompositionEntity::class,
         HealthSourceStatusEntity::class,
         ExerciseSessionEntity::class,
@@ -20,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ConversationMemoryEntity::class,
         AppEventEntity::class, ResponseEvidenceEntity::class, ReportArchiveEntity::class, AppMetadataEntity::class,
     ],
-    version = 10,
+    version = 12,
     exportSchema = false,
 )
 abstract class HealthCoachDatabase : RoomDatabase() {
@@ -42,9 +43,48 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 MIGRATION_7_8,
                 MIGRATION_8_9,
                 MIGRATION_9_10,
+                MIGRATION_10_11,
+                MIGRATION_11_12,
             ).addCallback(object : Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) { installRevisionTriggers(db) }
             }).build()
+
+        internal val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS heart_rate_samples (" +
+                    "sourceRecordId TEXT NOT NULL, timestampEpochMillis INTEGER NOT NULL, " +
+                    "bpm INTEGER NOT NULL, dataOrigin TEXT NOT NULL, " +
+                    "sessionId TEXT, phase TEXT NOT NULL, " +
+                    "PRIMARY KEY(sourceRecordId, timestampEpochMillis, bpm))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_heart_rate_samples_timestampEpochMillis ON heart_rate_samples(timestampEpochMillis)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_heart_rate_samples_sessionId_timestampEpochMillis ON heart_rate_samples(sessionId, timestampEpochMillis)")
+                listOf(
+                    "workoutHeartAverageBpm REAL",
+                    "workoutHeartCoverageMinutes INTEGER",
+                    "recoveryDrop1MinBpm INTEGER",
+                    "recoveryDrop2MinBpm INTEGER",
+                ).forEach { db.execSQL("ALTER TABLE exercise_sessions ADD COLUMN $it") }
+            }
+        }
+
+        internal val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                listOf(
+                    "assistedActiveCaloriesKcal REAL",
+                    "assistedWalkingCaloriesKcal REAL",
+                    "assistedExerciseCaloriesKcal REAL",
+                    "assistedHeartObservedMinutes INTEGER",
+                    "assistedHeartAdjustedMinutes INTEGER",
+                    "assistedZoneMinutesJson TEXT",
+                ).forEach { db.execSQL("ALTER TABLE daily_health_summary ADD COLUMN $it") }
+                listOf(
+                    "assistedActiveCaloriesKcal REAL",
+                    "assistedHeartObservedMinutes INTEGER",
+                    "assistedHeartAdjustedMinutes INTEGER",
+                    "assistedZoneMinutesJson TEXT",
+                ).forEach { db.execSQL("ALTER TABLE exercise_sessions ADD COLUMN $it") }
+            }
+        }
 
         internal val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {

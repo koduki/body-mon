@@ -537,14 +537,30 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 MetricCard(
                     "参考活動消費",
                     todayActive?.range?.let { it.activeRangeLabel() } ?: "未取得",
-                    "歩数・記録運動とデバイスの比較",
+                    "独立補助推定（運動中心拍が十分なら補正）とデバイスの比較",
+                    Modifier.weight(1f),
+                )
+            }
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MetricCard(
+                    "活動補助推定",
+                    todayDaily?.assistedActiveCaloriesKcal?.roundToLong()?.let { "$it kcal" } ?: "未算出",
+                    "歩数重複除外＋運動種別/MET＋運動中心拍",
+                    Modifier.weight(1f),
+                )
+                MetricCard(
+                    "心拍補正適用",
+                    todayDaily?.assistedHeartAdjustedMinutes?.let { "$it 分" } ?: "未取得",
+                    "運動中の心拍観測が十分な区間のみ",
                     Modifier.weight(1f),
                 )
             }
         }
         item {
             Text(
-                EnergyModel.INTERPRETATION,
+                EnergyModel.INTERPRETATION + " " + com.master.healthcoach.domain.ActivityEnergyAssist.INTERPRETATION,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -734,6 +750,22 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            session.assistedActiveCaloriesKcal?.let {
+                                Text("活動補助推定 ${it.roundToLong()} kcal（運動中心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分）",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            session.workoutHeartAverageBpm?.let {
+                                Text("運動平均 ${it.roundToLong()} bpm・観測 ${session.workoutHeartCoverageMinutes ?: 0}分",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            session.recoveryDrop1MinBpm?.let {
+                                Text("運動後1分の心拍変化 ${if (it >= 0) "-" else "+"}${kotlin.math.abs(it)} bpm（参考）",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            session.assistedZoneMinutesJson.heartZonesLabel()?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                         Text("${session.durationMinutes}分")
                     }
@@ -1081,6 +1113,15 @@ private fun TrendsScreen(state: MainUiState) {
                 }
                 item {
                     TrendCard(
+                        "活動補助推定",
+                        "kcal",
+                        dates.map { date ->
+                            TrendPoint(date, dailyByDate[date.toString()]?.assistedActiveCaloriesKcal)
+                        },
+                    )
+                }
+                item {
+                    TrendCard(
                         "基礎代謝",
                         "kcal/日",
                         dates.map { date ->
@@ -1141,6 +1182,22 @@ private fun TrendsScreen(state: MainUiState) {
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    session.assistedActiveCaloriesKcal?.let {
+                                        Text("補助推定 ${it.roundToLong()} kcal／心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分",
+                                            style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    session.workoutHeartAverageBpm?.let {
+                                        Text("平均心拍 ${it.roundToLong()} bpm・観測 ${session.workoutHeartCoverageMinutes ?: 0}分",
+                                            style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    session.recoveryDrop1MinBpm?.let {
+                                        Text("運動後1分の心拍変化 ${if (it >= 0) "-" else "+"}${kotlin.math.abs(it)} bpm（参考）",
+                                            style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    session.assistedZoneMinutesJson.heartZonesLabel()?.let {
+                                        Text(it, style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                                 Text("${session.durationMinutes}分")
                             }
@@ -1719,11 +1776,23 @@ private fun WeeklyScreen(
                             listOfNotNull(
                                 report.basalCaloriesDailyAverage?.let { "基礎代謝 ${it.kcal("/日")}" },
                                 "活動消費 $activeText",
+                                report.assistedActiveCaloriesDailyAverage?.let {
+                                    "独立補助推定 ${it.kcal("/日")}（${report.assistedActiveValidDays}日）"
+                                },
+                                "運動中心拍観測 ${report.assistedHeartObservedMinutes}分・MET補正適用 ${report.assistedHeartAdjustedMinutes}分",
+                                report.workoutRecovery1MinAverageBpm?.let {
+                                    "運動後1分の平均心拍低下 ${it.roundToLong()} bpm（${report.workoutRecovery1MinMeasurementSessions}セッション、参考）"
+                                },
+                                report.workoutComparisons28d.takeIf { it.isNotEmpty() }?.joinToString("／") {
+                                    "種目コード${it.exerciseType}の28日比較 ${if (it.differenceBpm >= 0) "+" else ""}${it.differenceBpm.roundToLong()} bpm（近7日${it.recentCount}件・先21日${it.referenceCount}件、時間のみ近似）"
+                                },
+                                report.assistedZoneMinutesJson.heartZonesLabel(),
                             ).joinToString("・"),
                         )
                         Text(
                             "上の「カロリー収支と体重の対照」で摂取との差を見ます。" +
-                                "Xiaomiは歩数のない活動も推定します。モデルとデバイスの差を比較し、真値や信頼区間とは扱いません。",
+                                "Xiaomiは歩数のない活動も推定します。独立補助推定は運動と重なる歩数を除外し、運動種別/METと十分な運動中心拍を使います。" +
+                                    "未記録活動を過小に見積もる可能性があり、両者の差を過大評価の証明や真値の信頼区間とは扱いません。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -2841,4 +2910,14 @@ private fun EnergyRange.balanceRangeLabel(): String {
     val low = lowKcal.roundToLong()
     val high = highKcal.roundToLong()
     return if (low == high) "${signed(lowKcal)} kcal" else "${signed(lowKcal)} 〜 ${signed(highKcal)} kcal"
+}
+
+/** Heart-zone counts are observed minutes only (Z1..Z5), not exercise duration. */
+private fun String?.heartZonesLabel(): String? {
+    val numbers = this?.removePrefix("[")?.removeSuffix("]")
+        ?.split(",")?.mapNotNull { it.trim().toIntOrNull() } ?: return null
+    if (numbers.size != 5 || numbers.all { it == 0 }) return null
+    return "運動中心拍ゾーン観測 " + numbers.mapIndexed { index, mins ->
+        "Z${index + 1} ${mins}分"
+    }.joinToString("・")
 }

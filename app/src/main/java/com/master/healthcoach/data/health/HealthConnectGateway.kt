@@ -30,6 +30,9 @@ import com.master.healthcoach.data.db.NutritionMealEntity
 import com.master.healthcoach.domain.HealthRecordEvidencePolicy
 import com.master.healthcoach.domain.SourceIntervalEvidence
 import com.master.healthcoach.domain.RecordedBasalRate
+import com.master.healthcoach.domain.WorkoutHeartAnalytics
+import com.master.healthcoach.data.db.HeartRateSampleEntity
+import com.master.healthcoach.domain.ActivityEnergyAssist
 import com.master.healthcoach.domain.BodyCompositionCalculator
 import com.master.healthcoach.domain.NutritionInterval
 import com.master.healthcoach.domain.NutritionMealClusterer
@@ -49,12 +52,14 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.roundToLong
+import com.master.healthcoach.domain.TrendMath
 
 data class HealthSyncBundle(
     val daily: List<DailyHealthSummaryEntity>,
     val body: List<BodyCompositionEntity>,
     val sources: List<HealthSourceStatusEntity>,
     val exerciseSessions: List<ExerciseSessionEntity>,
+    val heartRateSamples: List<HeartRateSampleEntity>,
     val nutritionMeals: List<NutritionMealEntity>,
     val rangeStartEpochMillis: Long,
     val rangeEndEpochMillisExclusive: Long,
@@ -150,7 +155,13 @@ class HealthConnectGateway(private val context: Context) {
         historyReadAvailable() &&
             HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY in grantedPermissions()
 
-    suspend fun sync(days: Long = 28, zoneId: ZoneId = ZoneId.systemDefault()): HealthSyncBundle {
+    suspend fun sync(
+        days: Long = 28,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+        heightCm: Double? = null,
+        sex: String? = null,
+        ageYears: Int? = null,
+    ): HealthSyncBundle {
         check(availability() == HealthConnectAvailability.AVAILABLE) {
             "Health Connect is not available"
         }
@@ -226,6 +237,8 @@ class HealthConnectGateway(private val context: Context) {
         )
         val mealsByDate = nutritionMeals.groupBy { it.date }
 
+        // Combine day-clipped estimates for sessions that cross midnight.
+        val assistPerSession = mutableMapOf<String, MutableList<ActivityEnergyAssist.SessionResult>>()
         val daily = (0 until days).map { offset ->
             val date = startDate.plusDays(offset)
             val dayStart = date.atStartOfDay(zoneId).toInstant()
@@ -288,6 +301,44 @@ class HealthConnectGateway(private val context: Context) {
             val dayHeartSamples = dayHeartRecords.flatMap { it.samples }.filter { it.time >= dayStart && it.time < dayEnd }
             val outsideExerciseSamples = dayHeartSamples.count { sample ->
                 exercises.none { sample.time >= it.startTime && sample.time < it.endTime }
+            }
+            // Bodyweight from the preceding seven days, or most recent within 30 days.
+            // Do not use future weigh-ins for a past day's energy calculation.
+            val recentWeight = weights.filter {
+                it.time < dayEnd && it.time >= dayEnd.minus(Duration.ofDays(7))
+            }.map { it.weight.inKilograms }.filter { it in 20.0..400.0 }
+            val weightForAssist = TrendMath.median(recentWeight)
+                ?: weights.filter { it.time < dayEnd && it.time >= dayEnd.minus(Duration.ofDays(30)) }
+                    .maxByOrNull { it.time }?.weight?.inKilograms
+            val assist = ActivityEnergyAssist.estimate(
+                dayStartMs = dayStart.toEpochMilli(),
+                dayEndMs = dayEnd.toEpochMilli(),
+                weightKg = weightForAssist,
+                heightCm = heightCm,
+                sex = sex,
+                ageYears = ageYears,
+                dailySteps = result[StepsRecord.COUNT_TOTAL],
+                stepIntervals = stepRecords.filter {
+                    it.startTime < dayEnd && it.endTime > dayStart
+                }.map {
+                    ActivityEnergyAssist.Steps(
+                        it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.count
+                    )
+                },
+                sessions = sessions.map {
+                    ActivityEnergyAssist.Session(
+                        id = "${it.metadata.dataOrigin.packageName}:${it.metadata.id}",
+                        startMs = it.startTime.toEpochMilli(),
+                        endMs = it.endTime.toEpochMilli(),
+                        activity = assistActivity(it.exerciseType, it.startTime, it.endTime, zoneId),
+                    )
+                },
+                heartSamples = dayHeartSamples.map {
+                    ActivityEnergyAssist.Heart(it.time.toEpochMilli(), it.beatsPerMinute)
+                },
+            )
+            assist?.sessions?.forEach { (id, energy) ->
+                assistPerSession.getOrPut(id) { mutableListOf() }.add(energy)
             }
             val originsByMetric = buildJsonObject {
                 put("wearableSourcePolicy", "xiaomi_only_v1")
@@ -400,6 +451,12 @@ class HealthConnectGateway(private val context: Context) {
                 metricOriginsJson = originsByMetric,
                 heartRateCoverageMinutes = dayHeartSamples.takeIf { it.isNotEmpty() }?.map { it.time.epochSecond / 60 }?.distinct()?.size,
                 heartRateOutsideExerciseSamples = dayHeartSamples.takeIf { it.isNotEmpty() }?.let { outsideExerciseSamples },
+                assistedActiveCaloriesKcal = assist?.activeKcal,
+                assistedWalkingCaloriesKcal = assist?.walkingKcal,
+                assistedExerciseCaloriesKcal = assist?.exerciseKcal,
+                assistedHeartObservedMinutes = assist?.heartObservedMinutes,
+                assistedHeartAdjustedMinutes = assist?.heartAdjustedMinutes,
+                assistedZoneMinutesJson = assist?.observedZoneMinutes?.joinToString(prefix = "[", postfix = "]"),
                 hikingMinutes = minutesFor(sessions.filter { it.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_HIKING }),
                 hiitMinutes = minutesFor(sessions.filter { it.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_HIGH_INTENSITY_INTERVAL_TRAINING }),
                 dataOrigins = origins,
@@ -520,7 +577,49 @@ class HealthConnectGateway(private val context: Context) {
             nutritionWriteShapeStatus(nutritionRecords, canReadNutrition, zoneId, checkedAt),
         )
 
+        val workoutsForAssociation = exercises.map {
+            WorkoutHeartAnalytics.Workout(
+                "${it.metadata.dataOrigin.packageName}:${it.metadata.id}",
+                it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.exerciseType
+            )
+        }
+        val heartRateSamples = heartRateRecords.flatMap { record ->
+            val id = "${record.metadata.dataOrigin.packageName}:${record.metadata.id}"
+            // Restrict association candidates to the Health Connect record's time span
+            // rather than scanning all workouts for every individual heart sample.
+            val possibleWorkouts = workoutsForAssociation.filter {
+                it.startMs <= record.endTime.toEpochMilli() + WorkoutHeartAnalytics.RECOVERY_WINDOW_MS &&
+                    it.endMs + WorkoutHeartAnalytics.RECOVERY_WINDOW_MS >= record.startTime.toEpochMilli()
+            }
+            record.samples.mapNotNull { point ->
+                val millis = point.time.toEpochMilli()
+                if (millis < start.toEpochMilli() || millis >= end.toEpochMilli()) null
+                else {
+                    val association = WorkoutHeartAnalytics.associate(millis, possibleWorkouts)
+                    HeartRateSampleEntity(
+                        sourceRecordId = id, timestampEpochMillis = millis,
+                        bpm = point.beatsPerMinute,
+                        dataOrigin = record.metadata.dataOrigin.packageName,
+                        sessionId = association.sessionId, phase = association.phase,
+                    )
+                }
+            }
+        }
+        // The Room composite key deduplicates overlapping Health Connect records
+        // on upsert. Avoid retaining a second large in-memory distinctBy set.
         val exerciseSessions = exercises.map { session ->
+            val workout = WorkoutHeartAnalytics.Workout(
+                "${session.metadata.dataOrigin.packageName}:${session.metadata.id}",
+                session.startTime.toEpochMilli(), session.endTime.toEpochMilli(), session.exerciseType
+            )
+            val relatedHeart = heartRateRecords.asSequence()
+                .filter { it.endTime.toEpochMilli() >= workout.startMs &&
+                    it.startTime.toEpochMilli() <= workout.endMs + WorkoutHeartAnalytics.RECOVERY_WINDOW_MS }
+                .flatMap { it.samples.asSequence() }
+                .map { WorkoutHeartAnalytics.Heart(it.time.toEpochMilli(), it.beatsPerMinute) }
+                .filter { it.timeMs >= workout.startMs && it.timeMs <= workout.endMs + WorkoutHeartAnalytics.RECOVERY_WINDOW_MS }
+                .toList()
+            val heart = WorkoutHeartAnalytics.recovery(workout, relatedHeart)
             val origin = session.metadata.dataOrigin.packageName
             ExerciseSessionEntity(
                 recordId = "$origin:${session.metadata.id}",
@@ -534,6 +633,21 @@ class HealthConnectGateway(private val context: Context) {
                 durationMinutes = Duration.between(session.startTime, session.endTime)
                     .toMinutes().coerceAtLeast(0),
                 dataOrigin = origin,
+                assistedActiveCaloriesKcal = assistPerSession["$origin:${session.metadata.id}"]
+                    ?.sumOf { it.activeKcal },
+                assistedHeartObservedMinutes = assistPerSession["$origin:${session.metadata.id}"]
+                    ?.sumOf { it.heartObservedMinutes },
+                assistedHeartAdjustedMinutes = assistPerSession["$origin:${session.metadata.id}"]
+                    ?.sumOf { it.heartAdjustedMinutes },
+                assistedZoneMinutesJson = assistPerSession["$origin:${session.metadata.id}"]
+                    ?.let { parts ->
+                        (0..4).map { index -> parts.sumOf { it.observedZoneMinutes[index] } }
+                            .joinToString(prefix = "[", postfix = "]")
+                    },
+                workoutHeartAverageBpm = heart.heartAverageBpm,
+                workoutHeartCoverageMinutes = heart.coverageMinutes,
+                recoveryDrop1MinBpm = heart.drop1MinBpm,
+                recoveryDrop2MinBpm = heart.drop2MinBpm,
             )
         }
         val mealEntities = nutritionMeals.mapIndexed { index, meal ->
@@ -559,10 +673,36 @@ class HealthConnectGateway(private val context: Context) {
             body = body,
             sources = sources,
             exerciseSessions = exerciseSessions,
+            heartRateSamples = heartRateSamples,
             nutritionMeals = mealEntities,
             rangeStartEpochMillis = start.toEpochMilli(),
             rangeEndEpochMillisExclusive = end.toEpochMilli(),
         )
+    }
+
+    /** Map Health Connect workout types to documented MET reference activities. */
+    private fun assistActivity(
+        type: Int,
+        start: Instant,
+        end: Instant,
+        zone: ZoneId,
+    ): ActivityEnergyAssist.Activity = when (type) {
+        ExerciseSessionRecord.EXERCISE_TYPE_WALKING -> ActivityEnergyAssist.Activity.WALKING
+        ExerciseSessionRecord.EXERCISE_TYPE_RUNNING,
+        ExerciseSessionRecord.EXERCISE_TYPE_RUNNING_TREADMILL -> ActivityEnergyAssist.Activity.RUNNING
+        ExerciseSessionRecord.EXERCISE_TYPE_BIKING,
+        ExerciseSessionRecord.EXERCISE_TYPE_BIKING_STATIONARY -> ActivityEnergyAssist.Activity.CYCLING
+        ExerciseSessionRecord.EXERCISE_TYPE_HIKING -> ActivityEnergyAssist.Activity.HIKING
+        ExerciseSessionRecord.EXERCISE_TYPE_SWIMMING_POOL,
+        ExerciseSessionRecord.EXERCISE_TYPE_SWIMMING_OPEN_WATER -> ActivityEnergyAssist.Activity.SWIMMING
+        ExerciseSessionRecord.EXERCISE_TYPE_ROWING,
+        ExerciseSessionRecord.EXERCISE_TYPE_ROWING_MACHINE -> ActivityEnergyAssist.Activity.ROWING
+        else -> when (classifyExerciseSession(type, start, end, zone)) {
+            ExerciseClass.STRENGTH -> ActivityEnergyAssist.Activity.STRENGTH
+            ExerciseClass.MORNING_ROUTINE -> ActivityEnergyAssist.Activity.MORNING_ROUTINE
+            ExerciseClass.INTERVAL -> ActivityEnergyAssist.Activity.HIIT
+            else -> ActivityEnergyAssist.Activity.OTHER
+        }
     }
 
     private suspend fun aggregateDaily(

@@ -8,6 +8,7 @@ import com.master.healthcoach.data.db.*
 import com.master.healthcoach.data.diagnostics.DiagnosticsStore
 import com.master.healthcoach.data.llm.*
 import com.master.healthcoach.domain.WeeklyReportBuilder
+import com.master.healthcoach.domain.WorkoutHeartAnalytics
 import kotlinx.serialization.json.*
 import java.security.MessageDigest
 import java.time.LocalDate
@@ -34,13 +35,13 @@ class HealthMcpBackend(
         val result = db.withTransaction {
             val revision = dao.metadata("revision").orEmpty()
             val today = LocalDate.now()
-            val to = date(args, "to", today)
-            val from = date(args, "from", to.minusDays(27))
+            val to = date(args, "to", if (name == "get_workout_hr_comparison") today.minusDays(1) else today)
+            val from = date(args, "from", if (name == "get_heart_rate_series") to else to.minusDays(27))
             if (from > to || ChronoUnit.DAYS.between(from, to) >= 90 || to > today) throw McpFailure("INVALID_RANGE")
             val zone = ZoneId.systemDefault()
             val start = from.atStartOfDay(zone).toInstant().toEpochMilli()
             val end = to.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
-            val limit = number(args, "limit", 50, 1, 100)
+            val limit = number(args, "limit", 50, 1, if (name == "get_heart_rate_series") 500 else 100)
             val fingerprint = digest(name + JsonObject(args.filterKeys { it != "cursor" }.toSortedMap()).toString())
             val cursor = decodeCursor(args.string("cursor"), revision, fingerprint)
             var next: String? = null
@@ -57,6 +58,88 @@ class HealthMcpBackend(
                     put("limitations", "BIA and energy expenditure are estimates. Origin candidates are not proven contributors. No automatic Health Connect refresh. Use GitHub at commitSha for code investigation.")
                 }
                 "get_profile_and_goals" -> json.encodeToJsonElement(dao.getGoal())
+                "get_workout_hr_comparison" -> {
+                    val periodEnd = date(args, "to", today.minusDays(1))
+                    if (periodEnd >= today) throw McpFailure("INVALID_RANGE")
+                    val analysisFrom = periodEnd.minusDays(27)
+                    val fromMs = analysisFrom.atStartOfDay(zone).toInstant().toEpochMilli()
+                    val endExclusiveMs = periodEnd.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                    val rows = dao.getExerciseSessions(fromMs, endExclusiveMs - 1)
+                    val comparison = WorkoutHeartAnalytics.compare28Days(rows.map {
+                        WorkoutHeartAnalytics.ComparableWorkout(
+                            it.exerciseType, it.durationMinutes, it.workoutHeartAverageBpm,
+                            it.startEpochMillis, it.workoutHeartCoverageMinutes ?: 0,
+                        )
+                    }, endExclusiveMs)
+                    val measuredDrops = rows.mapNotNull { it.recoveryDrop1MinBpm }
+                    effectiveFrom = analysisFrom.toString(); effectiveTo = periodEnd.toString()
+                    buildJsonObject {
+                        put("periodStart", analysisFrom.toString())
+                        put("periodEnd", periodEnd.toString())
+                        put("workoutCount", rows.size)
+                        put("recovery1MinObservedSessions", measuredDrops.size)
+                        put("recovery1MinMeanDropBpm", measuredDrops.takeIf { it.size >= 2 }?.average()?.let(::JsonPrimitive) ?: JsonNull)
+                        put("comparisons", json.encodeToJsonElement(comparison))
+                        put("limitations", "Duration and exercise type only; speed, slope, power, temperature, sleep, medication, and sensor calibration are unknown. No clinical or VO2max inference. Null means insufficient observations.")
+                    }
+                }
+                "get_heart_rate_series" -> {
+                    val sessionId = args.string("sessionId")
+                    // Month-wide raw data can be large. Use indexed paging or 1..60 minute buckets.
+                    val resolution = number(args, "resolutionMinutes", 1, 0, 60)
+                    val pageSize = number(args, "limit", 120, 1, 500)
+                    val total = dao.countHeartSamples(start, end + 1, sessionId)
+                    if (resolution == 0) {
+                        val token = if (cursor.isBlank()) emptyList() else cursor.split('|', limit = 4)
+                        if (token.isNotEmpty() && (token.size != 4 || token[0] != "r")) throw McpFailure("INVALID_CURSOR")
+                        val afterMs = token.getOrNull(1)?.toLongOrNull() ?: if (token.isEmpty()) Long.MIN_VALUE else throw McpFailure("INVALID_CURSOR")
+                        val afterSource = token.getOrNull(2).orEmpty()
+                        val afterBpm = token.getOrNull(3)?.toLongOrNull() ?: if (token.isEmpty()) -1L else throw McpFailure("INVALID_CURSOR")
+                        val rows = dao.pageHeartSamples(start, end + 1, sessionId, afterMs, afterSource, afterBpm, pageSize + 1)
+                        if (rows.size > pageSize) {
+                            val last = rows[pageSize - 1]
+                            next = "r|${last.timestampEpochMillis}|${last.sourceRecordId}|${last.bpm}"
+                        }
+                        buildJsonObject {
+                            put("mode", "raw"); put("resolutionMinutes", 0)
+                            put("matchingSampleCount", total); put("workoutSessionIdFilter", sessionId)
+                            put("samples", buildJsonArray {
+                                rows.take(pageSize).forEach { sample -> add(buildJsonObject {
+                                    put("timestampEpochMillis", sample.timestampEpochMillis)
+                                    put("bpm", sample.bpm)
+                                    put("origin", sample.dataOrigin)
+                                    put("sessionId", sample.sessionId?.let(::JsonPrimitive) ?: JsonNull)
+                                    put("phase", sample.phase)
+                                }) }
+                            })
+                            put("qualityNote", "Record-linked original samples. 'post_workout' is a 3-minute time window after a recorded session; 'unclassified' is not resting HR. Sensor artefacts may exist. No gaps are interpolated.")
+                        }
+                    } else {
+                        val bucketMs = resolution * 60_000L
+                        val parts = if (cursor.isBlank()) emptyList() else cursor.split('|', limit = 2)
+                        if (parts.isNotEmpty() && (parts.size != 2 || parts[0] != "b")) throw McpFailure("INVALID_CURSOR")
+                        val after = parts.getOrNull(1)?.toLongOrNull() ?: if (parts.isEmpty()) -1L else throw McpFailure("INVALID_CURSOR")
+                        val rows = dao.pageHeartBuckets(start, end + 1, sessionId, bucketMs, after, pageSize + 1)
+                        if (rows.size > pageSize) {
+                            val last = rows[pageSize - 1]
+                            next = "b|${last.bucketStartMillis / bucketMs}"
+                        }
+                        buildJsonObject {
+                            put("mode", "bucket"); put("resolutionMinutes", resolution)
+                            put("matchingSampleCount", total); put("workoutSessionIdFilter", sessionId)
+                            put("buckets", buildJsonArray {
+                                rows.take(pageSize).forEach { item -> add(buildJsonObject {
+                                    put("startEpochMillis", item.bucketStartMillis)
+                                    put("averageBpm", item.averageBpm)
+                                    put("minimumBpm", item.minimumBpm)
+                                    put("maximumBpm", item.maximumBpm)
+                                    put("sampleCount", item.sampleCount)
+                                }) }
+                            })
+                            put("qualityNote", "Observed buckets only; gaps are not interpolated. Unfiltered buckets may mix activity phases and must not be interpreted as resting HR.")
+                        }
+                    }
+                }
                 "get_health_metrics", "get_data_quality" -> {
                     val pageFrom = if (cursor.isBlank()) from else runCatching { LocalDate.parse(cursor) }.getOrElse { throw McpFailure("INVALID_CURSOR") }
                     if (pageFrom !in from..to) throw McpFailure("INVALID_CURSOR")
@@ -126,7 +209,7 @@ class HealthMcpBackend(
                 }
                 "get_app_diagnostics" -> buildJsonObject {
                     put("appVersion", BuildConfig.VERSION_NAME); put("commitSha", BuildConfig.COMMIT_SHA); put("sdkInt", Build.VERSION.SDK_INT)
-                    put("databaseVersion", 10); put("policyVersion", ConversationContextPolicy.VERSION)
+                    put("databaseVersion", 12); put("policyVersion", ConversationContextPolicy.VERSION)
                     put("grantedPermissions", json.encodeToJsonElement(granted)); put("captureEnabled", diagnostics.enabled); put("detailedCapture", diagnostics.detailed)
                     val events = dao.events(start, end, "", 0, 10001)
                     put("eventCount", events.size); put("sampleLimited", events.size > 10000)
@@ -163,7 +246,7 @@ class HealthMcpBackend(
                 }
                 else -> throw McpFailure("UNKNOWN_TOOL")
             }
-            val periodFiltered = name in setOf("get_health_metrics", "get_data_quality", "list_weekly_reports", "search_conversations", "get_app_diagnostics", "list_app_events")
+            val periodFiltered = name in setOf("get_workout_hr_comparison", "get_heart_rate_series", "get_health_metrics", "get_data_quality", "list_weekly_reports", "search_conversations", "get_app_diagnostics", "list_app_events")
             if (name == "get_weekly_report") {
                 val snapshot = (data as? JsonObject)?.get("snapshot") as? JsonObject
                 effectiveFrom = snapshot?.string("weekStart").orEmpty()

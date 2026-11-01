@@ -16,8 +16,11 @@ data class EnergyRange(val lowKcal: Double, val highKcal: Double) {
 data class ActiveEnergyEstimate(
     val stepModelKcal: Double,
     val deviceKcal: Double,
+    val assistedModelKcal: Double? = null,
 ) {
-    val discrepancyKcal: Double = deviceKcal - stepModelKcal
+    /** New activity/HR assist takes precedence only as an independent reference. */
+    val comparisonModelKcal: Double = assistedModelKcal ?: stepModelKcal
+    val discrepancyKcal: Double = deviceKcal - comparisonModelKcal
 
     val isLargeDiscrepancy: Boolean =
         kotlin.math.abs(discrepancyKcal) >= EnergyModel.LARGE_DISCREPANCY_THRESHOLD_KCAL
@@ -29,17 +32,19 @@ data class ActiveEnergyEstimate(
     val discrepancyReferenceAddKcal: Double =
         discrepancyKcal * EnergyModel.DISCREPANCY_REFERENCE_FACTOR
 
-    val evaluatedKcal: Double = stepModelKcal + discrepancyReferenceAddKcal
+    val evaluatedKcal: Double = comparisonModelKcal + discrepancyReferenceAddKcal
 
     val range: EnergyRange = EnergyRange(
-        lowKcal = min(stepModelKcal, deviceKcal),
-        highKcal = max(stepModelKcal, deviceKcal),
+        lowKcal = min(comparisonModelKcal, deviceKcal),
+        highKcal = max(comparisonModelKcal, deviceKcal),
     )
 }
 
 /** Averages over days where both values exist. Values are rounded for display. */
 data class ActiveEnergySummary(
     val stepModelDailyAverageKcal: Double,
+    val assistedDailyAverageKcal: Double?,
+    val assistedValidDays: Int,
     val deviceDailyAverageKcal: Double,
     val evaluatedDailyAverageKcal: Double,
     val range: EnergyRange,
@@ -95,11 +100,12 @@ object EnergyModel {
     const val DISPLAY_ROUNDING_KCAL = 10.0
 
     const val INTERPRETATION =
-        "Xiaomi Bandは心拍・手首の動き・プロフィールから推定し、歩数のない日常活動も含みます。" +
-            "歩数・記録運動モデルとデバイス値の小さい方〜大きい方を比較レンジとして残します。" +
-            "中点は差の50%を常時反映した感度分析の参考値で、校正済み消費量でも信頼区間でもありません。" +
-            "自転車は記録時間から軽い走行相当で換算。登山の勾配・水泳・未記録運動は換算に反映できません。" +
-            "体重の期間別傾向を優先し、摂取量や赤字量の指示には使いません。"
+        "Xiaomi Bandの活動消費はデバイス側の推定値です。" +
+            "補助推定がある日は、重複歩数を除いた運動種別・時間・十分な運動中心拍を使う独立した参考値と比較します。" +
+            "補助推定がない日は従来の歩数・記録運動モデルに戻します。" +
+            "両推定の小さい方〜大きい方は比較レンジで、真値の信頼区間ではありません。" +
+            "中点は感度分析用の参考値で、Xiaomiの校正係数や摂取量の根拠ではありません。" +
+            "補助推定も未記録活動を取り逃します。心拍補正の条件と制約はActivityEnergyAssistに従います。"
 
     /**
      * Weight as known on [date]: median of the 7 days up to [date], otherwise the most
@@ -191,7 +197,11 @@ object EnergyModel {
         val device = day.activeCaloriesKcal?.takeIf { it.isFinite() && it >= 0 } ?: return null
         val model = stepModelActiveKcal(day, weightKgOn(date, body), heightCm, sex)
             ?: return null
-        return ActiveEnergyEstimate(stepModelKcal = model, deviceKcal = device)
+        return ActiveEnergyEstimate(
+            stepModelKcal = model,
+            deviceKcal = device,
+            assistedModelKcal = day.assistedActiveCaloriesKcal?.takeIf { it.isFinite() && it >= 0.0 },
+        )
     }
 
     fun summarizeActive(
@@ -203,12 +213,15 @@ object EnergyModel {
         val estimates = days.mapNotNull { dailyActive(it, body, heightCm, sex) }
         if (estimates.size < MIN_VALID_DAYS) return null
         val model = estimates.map { it.stepModelKcal }.average()
+        val assisted = estimates.mapNotNull { it.assistedModelKcal }
         val device = estimates.map { it.deviceKcal }.average()
         val evaluated = estimates.map { it.evaluatedKcal }.average()
         val low = estimates.map { it.range.lowKcal }.average()
         val high = estimates.map { it.range.highKcal }.average()
         return ActiveEnergySummary(
             stepModelDailyAverageKcal = roundForDisplay(model),
+            assistedDailyAverageKcal = assisted.takeIf { it.isNotEmpty() }?.average()?.let(::roundForDisplay),
+            assistedValidDays = assisted.size,
             deviceDailyAverageKcal = roundForDisplay(device),
             evaluatedDailyAverageKcal = roundForDisplay(evaluated),
             range = EnergyRange(

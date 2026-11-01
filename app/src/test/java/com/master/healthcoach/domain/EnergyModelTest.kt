@@ -212,6 +212,24 @@ class EnergyModelTest {
     }
 
     @Test
+    fun `assisted activity energy is compared without replacing Xiaomi or old step baseline`() {
+        val day = testDay(
+            date = "2026-10-01",
+            steps = 8_000,
+            distanceMeters = 5_600.0,
+            activeCaloriesKcal = 900.0,
+        ).copy(assistedActiveCaloriesKcal = 600.0)
+        val body = listOf(testBody("2026-10-01", 70.0))
+        val result = EnergyModel.dailyActive(day, body, 175.0, "male")!!
+        assertEquals(196.0, result.stepModelKcal, 0.001)
+        assertEquals(600.0, result.comparisonModelKcal, 0.001)
+        assertEquals(900.0, result.deviceKcal, 0.001)
+        assertEquals(600.0, result.range.lowKcal, 0.001)
+        assertEquals(900.0, result.range.highKcal, 0.001)
+        assertEquals(750.0, result.evaluatedKcal, 0.001)
+    }
+
+    @Test
     fun `rounds display values to 10 kcal increments`() {
         assertEquals(250.0, EnergyModel.roundForDisplay(246.0), 0.001)
         assertEquals(240.0, EnergyModel.roundForDisplay(244.0), 0.001)

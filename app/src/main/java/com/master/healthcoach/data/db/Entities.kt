@@ -2,6 +2,7 @@ package com.master.healthcoach.data.db
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
 
@@ -43,6 +44,13 @@ data class DailyHealthSummaryEntity(
     val heartRateOutsideExerciseSamples: Int? = null,
     @ColumnInfo(defaultValue = "0") val hikingMinutes: Long = 0,
     @ColumnInfo(defaultValue = "0") val hiitMinutes: Long = 0,
+    /** Independently estimated activity kcal; never overwrite the Xiaomi field. */
+    val assistedActiveCaloriesKcal: Double? = null,
+    val assistedWalkingCaloriesKcal: Double? = null,
+    val assistedExerciseCaloriesKcal: Double? = null,
+    val assistedHeartObservedMinutes: Int? = null,
+    val assistedHeartAdjustedMinutes: Int? = null,
+    val assistedZoneMinutesJson: String? = null,
     val dataOrigins: String,
     val updatedAtEpochMillis: Long,
 )
@@ -91,6 +99,14 @@ data class ExerciseSessionEntity(
     val category: String,
     val durationMinutes: Long,
     val dataOrigin: String,
+    val assistedActiveCaloriesKcal: Double? = null,
+    val assistedHeartObservedMinutes: Int? = null,
+    val assistedHeartAdjustedMinutes: Int? = null,
+    val assistedZoneMinutesJson: String? = null,
+    val workoutHeartAverageBpm: Double? = null,
+    val workoutHeartCoverageMinutes: Int? = null,
+    val recoveryDrop1MinBpm: Int? = null,
+    val recoveryDrop2MinBpm: Int? = null,
 )
 
 @Serializable
@@ -196,3 +212,26 @@ data class ReportArchiveEntity(
 
 @Entity(tableName = "app_metadata")
 data class AppMetadataEntity(@PrimaryKey val key: String, val value: String)
+
+/**
+ * Original Xiaomi Health Connect HR samples. One point per source record/time/bpm;
+ * repeat syncs replace the same primary key instead of creating duplicates.
+ * phase is a temporal observation, NOT a medical resting-heart-rate label.
+ */
+@Serializable
+@Entity(
+    tableName = "heart_rate_samples",
+    primaryKeys = ["sourceRecordId", "timestampEpochMillis", "bpm"],
+    indices = [
+        Index(value = ["timestampEpochMillis"]),
+        Index(value = ["sessionId", "timestampEpochMillis"]),
+    ],
+)
+data class HeartRateSampleEntity(
+    val sourceRecordId: String,
+    val timestampEpochMillis: Long,
+    val bpm: Long,
+    val dataOrigin: String,
+    val sessionId: String? = null,
+    val phase: String = "unclassified",
+)

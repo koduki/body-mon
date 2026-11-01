@@ -576,7 +576,7 @@ class HealthDataExporterTest {
         )
 
         // 1. Period alignment check (completed 7 days: 10/06..10/12, matching weeklySummary)
-        assertEquals(2, payload.schemaVersion)
+        assertEquals(3, payload.schemaVersion)
         assertEquals("weekly_ai_analysis", payload.exportType)
         assertEquals(todayDate.toString(), payload.todayDate)
         assertEquals(weekStartDate.toString(), payload.weekStart)

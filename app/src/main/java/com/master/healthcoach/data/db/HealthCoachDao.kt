@@ -17,6 +17,45 @@ interface HealthCoachDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSources(items: List<HealthSourceStatusEntity>)
 
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertHeartRateSamples(items: List<HeartRateSampleEntity>)
+
+    @Query("DELETE FROM heart_rate_samples WHERE timestampEpochMillis >= :from AND timestampEpochMillis < :toExclusive")
+    suspend fun deleteHeartRateSamplesInRange(from: Long, toExclusive: Long)
+
+    @Query("DELETE FROM heart_rate_samples WHERE timestampEpochMillis < :beforeEpochMillis")
+    suspend fun pruneHeartRateSamples(beforeEpochMillis: Long)
+
+    @Query("SELECT COUNT(*) FROM heart_rate_samples WHERE timestampEpochMillis >= :from AND timestampEpochMillis < :toExclusive AND (:sessionId = '' OR sessionId = :sessionId)")
+    suspend fun countHeartSamples(from: Long, toExclusive: Long, sessionId: String): Int
+
+    @Query("""SELECT * FROM heart_rate_samples
+        WHERE timestampEpochMillis >= :from AND timestampEpochMillis < :toExclusive
+          AND (:sessionId = '' OR sessionId = :sessionId)
+          AND (timestampEpochMillis > :afterMs
+            OR (timestampEpochMillis = :afterMs AND sourceRecordId > :afterSource)
+            OR (timestampEpochMillis = :afterMs AND sourceRecordId = :afterSource AND bpm > :afterBpm))
+        ORDER BY timestampEpochMillis, sourceRecordId, bpm LIMIT :limit""")
+    suspend fun pageHeartSamples(
+        from: Long, toExclusive: Long, sessionId: String,
+        afterMs: Long, afterSource: String, afterBpm: Long, limit: Int,
+    ): List<HeartRateSampleEntity>
+
+    @Query("""SELECT (timestampEpochMillis / :bucketMs) * :bucketMs AS bucketStartMillis,
+        AVG(bpm) AS averageBpm, MIN(bpm) AS minimumBpm, MAX(bpm) AS maximumBpm,
+        COUNT(*) AS sampleCount
+        FROM heart_rate_samples
+        WHERE timestampEpochMillis >= :from AND timestampEpochMillis < :toExclusive
+          AND (:sessionId = '' OR sessionId = :sessionId)
+          AND (timestampEpochMillis / :bucketMs) > :afterBucket
+        GROUP BY timestampEpochMillis / :bucketMs
+        ORDER BY bucketStartMillis LIMIT :limit""")
+    suspend fun pageHeartBuckets(
+        from: Long, toExclusive: Long, sessionId: String,
+        bucketMs: Long, afterBucket: Long, limit: Int,
+    ): List<HeartRateBucket>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertExerciseSessions(items: List<ExerciseSessionEntity>)
 
@@ -137,6 +176,9 @@ interface HealthCoachDao {
     @Query("DELETE FROM exercise_sessions")
     suspend fun clearExerciseSessions()
 
+    @Query("DELETE FROM heart_rate_samples")
+    suspend fun clearHeartRateSamples()
+
     @Query("DELETE FROM nutrition_meals")
     suspend fun clearNutritionMeals()
 
@@ -183,3 +225,12 @@ interface HealthCoachDao {
     @Query("SELECT MIN(createdAtEpochMillis) FROM chat_messages") suspend fun earliestMessage(): Long?
     @Query("SELECT * FROM health_source_status ORDER BY recordType") suspend fun getSources(): List<HealthSourceStatusEntity>
 }
+
+/** SQL aggregate of observed raw points; empty buckets are never interpolated. */
+data class HeartRateBucket(
+    val bucketStartMillis: Long,
+    val averageBpm: Double,
+    val minimumBpm: Long,
+    val maximumBpm: Long,
+    val sampleCount: Int,
+)

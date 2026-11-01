@@ -18,6 +18,17 @@ data class WeeklySnapshot(
     val bodyMeasurementDays: Int = 0,
     val stepsDailyAverage: Long? = null,
     val activeCaloriesDailyAverage: Double? = null,
+    /** Independent activity/heart supplementary estimate; not Xiaomi calibration. */
+    val assistedActiveCaloriesDailyAverage: Double? = null,
+    val assistedActiveValidDays: Int = 0,
+    val assistedHeartObservedMinutes: Int = 0,
+    val assistedHeartAdjustedMinutes: Int = 0,
+    /** Observed, not interpolated, Z1..Z5 minutes, encoded as JSON array. */
+    val assistedZoneMinutesJson: String? = null,
+    /** Post-workout drop is a conditional observation, not a clinical clearance signal. */
+    val workoutRecovery1MinAverageBpm: Double? = null,
+    val workoutRecovery1MinMeasurementSessions: Int = 0,
+    val workoutComparisons28d: List<WorkoutHeartAnalytics.Comparison> = emptyList(),
     val exerciseSessions: Int = 0,
     val exerciseMinutes: Long = 0,
     val strengthMinutes: Long = 0,

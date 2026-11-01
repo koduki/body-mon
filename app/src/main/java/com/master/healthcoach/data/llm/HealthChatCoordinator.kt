@@ -15,6 +15,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -145,6 +146,10 @@ class HealthChatCoordinator(
                         "炭水化物=${snapshot.carbohydrateDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
                         "(${snapshot.carbohydrateEnergyPercent.energyRatio()})",
             )
+            appendLine("assistedZoneMinutesJson は実測できた運動心拍のZ1〜Z5観測分だけを表し、未観測区間は含みません。")
+            appendLine("運動後の心拍回復と28日間比較は参考観測です。運動種別・時間が揃っても速度や負荷は未確認なので、心肺機能の改善を断定してはいけません。")
+            appendLine("活動補助消費は歩数・運動種別/時間・十分な運動中心拍のみで計算した独立参考値です。" +
+                "Xiaomiとの差は過大評価の証明ではありません。心拍カバレッジ不足時はMETのみで推定します。")
             appendLine("目標: ${goal?.existingAiGoal()}")
             appendLine("会話から確認済みの習慣: ${ConversationContextPolicy.memoryForModel(repository.getMemory()?.summary, goal)}")
             appendLine("分析の軸は次の2点です。")
@@ -235,7 +240,7 @@ class HealthChatCoordinator(
         【専門家としてのメトリクス評価基準】
         ・減量ペースは筋力と回復を守りながら脂肪を落とすことを優先し、設定された月の減量目標を優先し、未設定時は28日トレンドで体重の0.3〜0.7%/週減を運用目安とします。BIA由来の体組成（体脂肪率・脂肪量・除脂肪量）は水分等で日々変動するため単日値で一喜一憂せず、7日中央値や28日傾向で判断します。除脂肪量は骨格筋量そのものではなく筋肉維持の参考指標です。
         ・6時間は本人の最低運用目標です。達成しても睡眠・回復が十分とは判断しません。睡眠ステージ合計とセッション枠を区別し、ステージ欠測時の代用値を実睡眠と呼びません。眠気・疲労も確認します。
-        ・活動消費は歩数・記録運動モデルとXiaomi Bandの比較レンジです。Bandは歩数のない日常活動も推定します。差を一律に誤差とせず、どちらが真値とも断定しません。中点は連続的な参考シナリオで、校正済み消費量ではありません。摂取量・赤字量の指示はしません。
+         ・活動消費はXiaomiと独立補助推定（歩数の運動重複を除外し、種別/時間のMETと十分な運動中心拍のみで限定補正）の比較です。補助推定未取得時は従来歩数モデルです。差を一律に誤差とせず、どちらが真値とも断定しません。補助推定も未記録活動を取り逃します。中点は校正済み消費量ではありません。摂取量・赤字量の指示はしません。
 
         ・食事方針は低脂質ダイエット（脂質エネルギー比15〜25%目安、30%超は出どころ確認、たんぱく質は体重1kgあたり1.6g以上目安）です。食事記録がある日のみを観測値とし、欠測日を0kcal扱いしません。
         ・朝の短いOther Workoutは朝トレ候補です。その他の運動を朝トレやRFAと断定しません。HIITは強度・様式を分けて解釈します。
@@ -318,6 +323,15 @@ internal fun WeeklySnapshot.existingAiContract(): JsonObject = buildJsonObject {
     put("bodyMeasurementDays", bodyMeasurementDays)
     stepsDailyAverage?.let { put("stepsDailyAverage", it) }
     activeCaloriesDailyAverage?.let { put("activeCaloriesDailyAverage", it) }
+    assistedActiveCaloriesDailyAverage?.let { put("assistedActiveCaloriesDailyAverage", it) }
+    put("assistedActiveValidDays", assistedActiveValidDays)
+    put("assistedHeartObservedMinutes", assistedHeartObservedMinutes)
+    put("assistedHeartAdjustedMinutes", assistedHeartAdjustedMinutes)
+    workoutRecovery1MinAverageBpm?.let { put("workoutRecovery1MinAverageBpm", it) }
+    put("workoutRecovery1MinMeasurementSessions", workoutRecovery1MinMeasurementSessions)
+    put("workoutComparisons28d", kotlinx.serialization.json.Json.Default.encodeToJsonElement(workoutComparisons28d))
+    assistedZoneMinutesJson?.let { put("assistedZoneMinutesJson", it) }
+    put("assistedModelVersion", com.master.healthcoach.domain.ActivityEnergyAssist.VERSION)
     put("exerciseSessions", exerciseSessions)
     put("exerciseMinutes", exerciseMinutes)
     put("strengthMinutes", strengthMinutes)
