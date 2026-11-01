@@ -53,6 +53,20 @@ import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.roundToLong
 import com.master.healthcoach.domain.TrendMath
+import com.master.healthcoach.data.diagnostics.HealthConnectPermissionException
+import com.master.healthcoach.data.diagnostics.HealthConnectUnavailableException
+
+interface SyncStageObserver {
+    suspend fun onStageStarted(stage: String) {}
+    suspend fun onStageCompleted(
+        stage: String,
+        startEpochMillis: Long,
+        endEpochMillis: Long,
+        attributes: Map<String, Long> = emptyMap(),
+        stringAttributes: Map<String, String> = emptyMap(),
+        booleanAttributes: Map<String, Boolean> = emptyMap(),
+    ) {}
+}
 
 data class HealthSyncBundle(
     val daily: List<DailyHealthSummaryEntity>,
@@ -71,8 +85,8 @@ enum class HealthConnectAvailability {
     UNAVAILABLE,
 }
 
-class HealthConnectGateway(private val context: Context) {
-    private val client by lazy { HealthConnectClient.getOrCreate(context) }
+open class HealthConnectGateway(private val context: Context?) {
+    private val client by lazy { HealthConnectClient.getOrCreate(requireNotNull(context)) }
 
     val corePermissions: Set<String> = setOf(
         HealthPermission.getReadPermission(WeightRecord::class),
@@ -95,8 +109,8 @@ class HealthConnectGateway(private val context: Context) {
     private val nutritionPermission =
         HealthPermission.getReadPermission(NutritionRecord::class)
 
-    fun availability(): HealthConnectAvailability = when (
-        HealthConnectClient.getSdkStatus(context)
+    open fun availability(): HealthConnectAvailability = when (
+        HealthConnectClient.getSdkStatus(requireNotNull(context))
     ) {
         HealthConnectClient.SDK_AVAILABLE -> HealthConnectAvailability.AVAILABLE
         HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED ->
@@ -104,25 +118,25 @@ class HealthConnectGateway(private val context: Context) {
         else -> HealthConnectAvailability.UNAVAILABLE
     }
 
-    fun backgroundReadAvailable(): Boolean =
+    open fun backgroundReadAvailable(): Boolean =
         availability() == HealthConnectAvailability.AVAILABLE &&
             client.features.getFeatureStatus(
                 HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND,
             ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
 
-    fun activityIntensityAvailable(): Boolean =
+    open fun activityIntensityAvailable(): Boolean =
         availability() == HealthConnectAvailability.AVAILABLE &&
             client.features.getFeatureStatus(
                 HealthConnectFeatures.FEATURE_ACTIVITY_INTENSITY,
             ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
 
-    fun historyReadAvailable(): Boolean =
+    open fun historyReadAvailable(): Boolean =
         availability() == HealthConnectAvailability.AVAILABLE &&
             client.features.getFeatureStatus(
                 HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_HISTORY,
             ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
 
-    fun requestedPermissions(): Set<String> = buildSet {
+    open fun requestedPermissions(): Set<String> = buildSet {
         addAll(corePermissions)
         add(sleepPermission)
         add(heartRatePermission)
@@ -138,36 +152,40 @@ class HealthConnectGateway(private val context: Context) {
         }
     }
 
-    suspend fun grantedPermissions(): Set<String> =
+    open suspend fun grantedPermissions(): Set<String> =
         if (availability() == HealthConnectAvailability.AVAILABLE) {
             client.permissionController.getGrantedPermissions()
         } else {
             emptySet()
         }
 
-    suspend fun hasCorePermissions(): Boolean = grantedPermissions().containsAll(corePermissions)
+    open suspend fun hasCorePermissions(): Boolean = grantedPermissions().containsAll(corePermissions)
 
-    suspend fun hasBackgroundPermission(): Boolean =
+    open suspend fun hasBackgroundPermission(): Boolean =
         !backgroundReadAvailable() ||
             HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND in grantedPermissions()
 
-    suspend fun hasHistoryPermission(): Boolean =
+    open suspend fun hasHistoryPermission(): Boolean =
         historyReadAvailable() &&
             HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY in grantedPermissions()
 
-    suspend fun sync(
+    open suspend fun sync(
         days: Long = 28,
         zoneId: ZoneId = ZoneId.systemDefault(),
         heightCm: Double? = null,
         sex: String? = null,
         ageYears: Int? = null,
+        stageObserver: SyncStageObserver? = null,
     ): HealthSyncBundle {
-        check(availability() == HealthConnectAvailability.AVAILABLE) {
-            "Health Connect is not available"
+        val permStageStart = System.currentTimeMillis()
+        stageObserver?.onStageStarted("healthconnect.permissions")
+        val currentAvailability = availability()
+        if (currentAvailability != HealthConnectAvailability.AVAILABLE) {
+            throw HealthConnectUnavailableException(currentAvailability.name, "Health Connect is not available")
         }
         val granted = grantedPermissions()
-        check(granted.containsAll(corePermissions)) {
-            "Health Connectの必須データ権限が不足しています"
+        if (!granted.containsAll(corePermissions)) {
+            throw HealthConnectPermissionException("Health Connectの必須データ権限が不足しています")
         }
         val canReadSleep = sleepPermission in granted
         val canReadHeartRate = heartRatePermission in granted
@@ -176,12 +194,37 @@ class HealthConnectGateway(private val context: Context) {
         val canReadIntensity = intensitySupported && activityIntensityPermission in granted
         val canReadNutrition = nutritionPermission in granted
         val canReadTotalCalories = totalCaloriesPermission in granted
+        val optionalGrantedCount = listOf(
+            canReadSleep,
+            canReadHeartRate,
+            canReadBasalRate,
+            canReadIntensity,
+            canReadNutrition,
+            canReadTotalCalories,
+        ).count { it }.toLong()
+        val bgGranted = hasBackgroundPermission()
+        val historyGranted = hasHistoryPermission()
+        val permStageEnd = System.currentTimeMillis().coerceAtLeast(permStageStart)
+        stageObserver?.onStageCompleted(
+            stage = "healthconnect.permissions",
+            startEpochMillis = permStageStart,
+            endEpochMillis = permStageEnd,
+            attributes = mapOf("hc.optional_granted_count" to optionalGrantedCount),
+            stringAttributes = mapOf("hc.availability" to currentAvailability.name.lowercase()),
+            booleanAttributes = mapOf(
+                "hc.core_granted" to true,
+                "hc.bg_granted" to bgGranted,
+                "hc.history_granted" to historyGranted,
+            ),
+        )
 
         val endDateExclusive = LocalDate.now(zoneId).plusDays(1)
         val startDate = endDateExclusive.minusDays(days)
         val start = startDate.atStartOfDay(zoneId).toInstant()
         val end = endDateExclusive.atStartOfDay(zoneId).toInstant()
 
+        val readStageStart = System.currentTimeMillis()
+        stageObserver?.onStageStarted("healthconnect.read")
         val weights = readAll<WeightRecord>(start, end)
         val bodyFats = readAll<BodyFatRecord>(start, end)
         // Diagnose all writers; only Xiaomi records contribute to health values.
@@ -220,6 +263,44 @@ class HealthConnectGateway(private val context: Context) {
             start,
             end,
         )
+        val dailyAggregations = (0 until days).map { offset ->
+            val date = startDate.plusDays(offset)
+            val dayStart = date.atStartOfDay(zoneId).toInstant()
+            val dayEnd = date.plusDays(1).atStartOfDay(zoneId).toInstant()
+            aggregateDaily(
+                start = dayStart,
+                end = dayEnd,
+                includeHeartRate = canReadHeartRate,
+                includeIntensity = canReadIntensity,
+                includeNutrition = canReadNutrition,
+            )
+        }
+        val readStageEnd = System.currentTimeMillis().coerceAtLeast(readStageStart)
+        stageObserver?.onStageCompleted(
+            stage = "healthconnect.read",
+            startEpochMillis = readStageStart,
+            endEpochMillis = readStageEnd,
+            attributes = mapOf(
+                "sync.days" to days,
+                "records.weight" to weights.size.toLong(),
+                "records.body_fat" to bodyFats.size.toLong(),
+                "records.steps" to stepRecords.size.toLong(),
+                "records.distance" to distanceRecords.size.toLong(),
+                "records.exercise_all" to allExercises.size.toLong(),
+                "records.exercise_selected" to exercises.size.toLong(),
+                "records.active_calories" to activeCalorieRecords.size.toLong(),
+                "records.total_calories" to totalCalorieRecords.size.toLong(),
+                "records.sleep" to sleepRecords.size.toLong(),
+                "records.heart_rate_records" to heartRateRecords.size.toLong(),
+                "records.heart_rate_samples" to heartRateRecords.sumOf { it.samples.size }.toLong(),
+                "records.basal_rate" to basalRateRecords.size.toLong(),
+                "records.intensity" to intensityRecords.size.toLong(),
+                "records.nutrition" to nutritionRecords.size.toLong(),
+            ),
+        )
+
+        val estimateStageStart = System.currentTimeMillis()
+        stageObserver?.onStageStarted("energy.estimate")
         val nutritionMeals = NutritionMealClusterer.cluster(
             nutritionRecords.map { record ->
                 NutritionRecordSnapshot(
@@ -269,13 +350,7 @@ class HealthConnectGateway(private val context: Context) {
                     sample.time >= sleep.startTime && sample.time <= sleep.endTime
                 }
             }.orEmpty()
-            val (result, otherResult) = aggregateDaily(
-                start = dayStart,
-                end = dayEnd,
-                includeHeartRate = canReadHeartRate,
-                includeIntensity = canReadIntensity,
-                includeNutrition = canReadNutrition,
-            )
+            val (result, otherResult) = dailyAggregations[offset.toInt()]
             val sessions = exercises.filter { session ->
                 HealthRecordEvidencePolicy.overlaps(session.startTime.toEpochMilli(), session.endTime.toEpochMilli(), dayStart.toEpochMilli(), dayEnd.toEpochMilli())
             }
@@ -667,6 +742,21 @@ class HealthConnectGateway(private val context: Context) {
                 isDailyRecord = meal.isDailyTotal,
             )
         }
+        val estimateStageEnd = System.currentTimeMillis().coerceAtLeast(estimateStageStart)
+        stageObserver?.onStageCompleted(
+            stage = "energy.estimate",
+            startEpochMillis = estimateStageStart,
+            endEpochMillis = estimateStageEnd,
+            attributes = mapOf(
+                "days" to daily.size.toLong(),
+                "body" to body.size.toLong(),
+                "sessions" to exerciseSessions.size.toLong(),
+                "heartSamples" to heartRateSamples.size.toLong(),
+                "meals" to mealEntities.size.toLong(),
+                "assist.valid_days" to daily.count { it.assistedActiveCaloriesKcal != null }.toLong(),
+                "assist.sessions_estimated" to assistPerSession.size.toLong(),
+            ),
+        )
 
         return HealthSyncBundle(
             daily = daily,

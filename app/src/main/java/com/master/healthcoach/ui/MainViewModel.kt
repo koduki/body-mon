@@ -131,16 +131,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 requiredPermissions = repository.requestedPermissions(),
                 grantedPermissions = granted,
             )
-            if (syncWhenGranted && repository.hasCorePermissions()) sync()
+            if (syncWhenGranted && repository.hasCorePermissions()) sync(trigger = "permission_refresh")
         }
     }
 
-    fun sync() {
+    fun sync(trigger: String = "ui") {
         if (transient.value.isSyncing) return
         viewModelScope.launch {
             container.diagnostics.event("ui_sync", "started")
             update { it.copy(isSyncing = true, message = null) }
-            runCatching { repository.sync() }
+            runCatching { repository.sync(trigger = trigger) }
                 .onSuccess { update { it.copy(message = "Health Connectを更新しました") } }
                 .onFailure { error -> update { it.copy(message = error.userMessage()) } }
             update { it.copy(isSyncing = false) }
@@ -313,6 +313,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             runCatching {
                 com.master.healthcoach.data.mcp.TunnelService.stopAndAwait(getApplication())
                 container.tunnelSettings.clear()
+                container.diagnostics.otlpSettings.clear()
                 repository.clearAll()
                 container.apiKeyStore.clear()
             }.onSuccess {
