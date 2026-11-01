@@ -754,6 +754,14 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                                 Text("活動補助推定 ${it.roundToLong()} kcal（運動中心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分）",
                                     style = MaterialTheme.typography.bodySmall)
                             }
+                            session.workoutHeartAverageBpm?.let {
+                                Text("運動平均 ${it.roundToLong()} bpm・観測 ${session.workoutHeartCoverageMinutes ?: 0}分",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            session.recoveryDrop1MinBpm?.let {
+                                Text("運動後1分の心拍変化 ${if (it >= 0) "-" else "+"}${kotlin.math.abs(it)} bpm（参考）",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
                             session.assistedZoneMinutesJson.heartZonesLabel()?.let {
                                 Text(it, style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1176,6 +1184,14 @@ private fun TrendsScreen(state: MainUiState) {
                                     )
                                     session.assistedActiveCaloriesKcal?.let {
                                         Text("補助推定 ${it.roundToLong()} kcal／心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分",
+                                            style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    session.workoutHeartAverageBpm?.let {
+                                        Text("平均心拍 ${it.roundToLong()} bpm・観測 ${session.workoutHeartCoverageMinutes ?: 0}分",
+                                            style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    session.recoveryDrop1MinBpm?.let {
+                                        Text("運動後1分の心拍変化 ${if (it >= 0) "-" else "+"}${kotlin.math.abs(it)} bpm（参考）",
                                             style = MaterialTheme.typography.bodySmall)
                                     }
                                     session.assistedZoneMinutesJson.heartZonesLabel()?.let {
@@ -1764,6 +1780,12 @@ private fun WeeklyScreen(
                                     "独立補助推定 ${it.kcal("/日")}（${report.assistedActiveValidDays}日）"
                                 },
                                 "運動中心拍観測 ${report.assistedHeartObservedMinutes}分・MET補正適用 ${report.assistedHeartAdjustedMinutes}分",
+                                report.workoutRecovery1MinAverageBpm?.let {
+                                    "運動後1分の平均心拍低下 ${it.roundToLong()} bpm（${report.workoutRecovery1MinMeasurementSessions}セッション、参考）"
+                                },
+                                report.workoutComparisons28d.takeIf { it.isNotEmpty() }?.joinToString("／") {
+                                    "種目コード${it.exerciseType}の28日比較 ${if (it.differenceBpm >= 0) "+" else ""}${it.differenceBpm.roundToLong()} bpm（近7日${it.recentCount}件・先21日${it.referenceCount}件、時間のみ近似）"
+                                },
                                 report.assistedZoneMinutesJson.heartZonesLabel(),
                             ).joinToString("・"),
                         )
