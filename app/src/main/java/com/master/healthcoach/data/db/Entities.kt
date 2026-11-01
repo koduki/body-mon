@@ -103,6 +103,10 @@ data class ExerciseSessionEntity(
     val assistedHeartObservedMinutes: Int? = null,
     val assistedHeartAdjustedMinutes: Int? = null,
     val assistedZoneMinutesJson: String? = null,
+    val workoutHeartAverageBpm: Double? = null,
+    val workoutHeartCoverageMinutes: Int? = null,
+    val recoveryDrop1MinBpm: Int? = null,
+    val recoveryDrop2MinBpm: Int? = null,
 )
 
 @Serializable
