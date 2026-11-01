@@ -145,6 +145,7 @@ class HealthChatCoordinator(
                         "炭水化物=${snapshot.carbohydrateDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
                         "(${snapshot.carbohydrateEnergyPercent.energyRatio()})",
             )
+            appendLine("assistedZoneMinutesJson は実測できた運動心拍のZ1〜Z5観測分だけを表し、未観測区間は含みません。")
             appendLine("活動補助消費は歩数・運動種別/時間・十分な運動中心拍のみで計算した独立参考値です。" +
                 "Xiaomiとの差は過大評価の証明ではありません。心拍カバレッジ不足時はMETのみで推定します。")
             appendLine("目標: ${goal?.existingAiGoal()}")
@@ -324,6 +325,7 @@ internal fun WeeklySnapshot.existingAiContract(): JsonObject = buildJsonObject {
     put("assistedActiveValidDays", assistedActiveValidDays)
     put("assistedHeartObservedMinutes", assistedHeartObservedMinutes)
     put("assistedHeartAdjustedMinutes", assistedHeartAdjustedMinutes)
+    assistedZoneMinutesJson?.let { put("assistedZoneMinutesJson", it) }
     put("assistedModelVersion", com.master.healthcoach.domain.ActivityEnergyAssist.VERSION)
     put("exerciseSessions", exerciseSessions)
     put("exerciseMinutes", exerciseMinutes)
