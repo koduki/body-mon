@@ -25,6 +25,10 @@ data class WeeklySnapshot(
     val assistedHeartAdjustedMinutes: Int = 0,
     /** Observed, not interpolated, Z1..Z5 minutes, encoded as JSON array. */
     val assistedZoneMinutesJson: String? = null,
+    /** Post-workout drop is a conditional observation, not a clinical clearance signal. */
+    val workoutRecovery1MinAverageBpm: Double? = null,
+    val workoutRecovery1MinMeasurementSessions: Int = 0,
+    val workoutComparisons28d: List<WorkoutHeartAnalytics.Comparison> = emptyList(),
     val exerciseSessions: Int = 0,
     val exerciseMinutes: Long = 0,
     val strengthMinutes: Long = 0,
