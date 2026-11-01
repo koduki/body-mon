@@ -158,6 +158,19 @@ object WeeklyReportBuilder {
             stepModelActiveDailyAverage = EnergyModel.summarizeActive(comparableTrendDaily, body, goal?.heightCm, goal?.sex)?.stepModelDailyAverageKcal,
         )
 
+        val observedZoneTotals = IntArray(5)
+        var zoneDays = 0
+        currentDaily.mapNotNull { it.assistedZoneMinutesJson }.forEach { raw ->
+            val parsed = raw.removePrefix("[").removeSuffix("]")
+                .split(",").mapNotNull { it.trim().toIntOrNull() }
+            if (parsed.size == 5 && parsed.all { it >= 0 }) {
+                for (index in 0..4) observedZoneTotals[index] += parsed[index]
+                zoneDays++
+            }
+        }
+        val observedZonesJson = if (zoneDays > 0) {
+            observedZoneTotals.joinToString(prefix = "[", postfix = "]")
+        } else null
         val totalStrengthMinutes = currentDaily.sumOf { it.strengthMinutes }
         val totalCardioMinutes = currentDaily.sumOf { it.cardioMinutes }
         val totalOtherExerciseMinutes = currentDaily.sumOf {
@@ -236,6 +249,7 @@ object WeeklyReportBuilder {
             assistedActiveValidDays = activeSummary?.assistedValidDays ?: 0,
             assistedHeartObservedMinutes = currentDaily.sumOf { it.assistedHeartObservedMinutes ?: 0 },
             assistedHeartAdjustedMinutes = currentDaily.sumOf { it.assistedHeartAdjustedMinutes ?: 0 },
+            assistedZoneMinutesJson = observedZonesJson,
             exerciseSessions = currentDaily.sumOf { it.exerciseSessionCount },
             exerciseMinutes = currentDaily.sumOf { it.exerciseMinutes },
             strengthMinutes = totalStrengthMinutes,
