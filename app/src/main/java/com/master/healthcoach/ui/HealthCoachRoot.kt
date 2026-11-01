@@ -1326,7 +1326,7 @@ private fun WeeklyScreen(
                 }
             }
 
-            if (report.nutritionCompleteDays > 0 && report.basalCaloriesMeasurementDays > 0 &&
+            if ((report.nutritionCompleteDays ?: 0) > 0 && report.basalCaloriesMeasurementDays > 0 &&
                 report.referenceEnergyBalanceValidDays > 0) item {
                 val balanceAnalysis = EnergyBalanceWeightAnalyzer.analyze(report)
                 Card(
