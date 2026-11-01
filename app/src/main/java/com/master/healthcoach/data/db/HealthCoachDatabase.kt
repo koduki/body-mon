@@ -58,6 +58,12 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                     "PRIMARY KEY(sourceRecordId, timestampEpochMillis, bpm))")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_heart_rate_samples_timestampEpochMillis ON heart_rate_samples(timestampEpochMillis)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_heart_rate_samples_sessionId_timestampEpochMillis ON heart_rate_samples(sessionId, timestampEpochMillis)")
+                listOf(
+                    "workoutHeartAverageBpm REAL",
+                    "workoutHeartCoverageMinutes INTEGER",
+                    "recoveryDrop1MinBpm INTEGER",
+                    "recoveryDrop2MinBpm INTEGER",
+                ).forEach { db.execSQL("ALTER TABLE exercise_sessions ADD COLUMN $it") }
                 installHeartRevisionTriggers(db)
             }
         }
