@@ -169,14 +169,44 @@ open class HealthConnectGateway(private val context: Context?) {
         historyReadAvailable() &&
             HealthPermission.PERMISSION_READ_HEALTH_DATA_HISTORY in grantedPermissions()
 
-    open suspend fun sync(
-        days: Long = 28,
-        zoneId: ZoneId = ZoneId.systemDefault(),
-        heightCm: Double? = null,
-        sex: String? = null,
-        ageYears: Int? = null,
-        stageObserver: SyncStageObserver? = null,
-    ): HealthSyncBundle {
+    private data class HealthPermissionsState(
+        val currentAvailability: HealthConnectAvailability,
+        val canReadSleep: Boolean,
+        val canReadHeartRate: Boolean,
+        val canReadBasalRate: Boolean,
+        val canReadIntensity: Boolean,
+        val intensitySupported: Boolean,
+        val canReadNutrition: Boolean,
+        val canReadTotalCalories: Boolean,
+        val bgGranted: Boolean,
+        val historyGranted: Boolean,
+    )
+
+    private data class RawHealthRecords(
+        val weights: List<WeightRecord>,
+        val bodyFats: List<BodyFatRecord>,
+        val allExercises: List<ExerciseSessionRecord>,
+        val exercises: List<ExerciseSessionRecord>,
+        val totalCalorieRecords: List<TotalCaloriesBurnedRecord>,
+        val stepRecords: List<StepsRecord>,
+        val distanceRecords: List<DistanceRecord>,
+        val activeCalorieRecords: List<ActiveCaloriesBurnedRecord>,
+        val sleepRecords: List<SleepSessionRecord>,
+        val heartRateRecords: List<HeartRateRecord>,
+        val basalRateRecords: List<BasalMetabolicRateRecord>,
+        val intensityRecords: List<ActivityIntensityRecord>,
+        val nutritionRecords: List<NutritionRecord>,
+        val dailyAggregations: List<Pair<AggregationResult, AggregationResult?>>,
+    )
+
+    private data class ProcessedSyncBundle(
+        val bundle: HealthSyncBundle,
+        val sessionEstimateCount: Int,
+    )
+
+    private suspend fun validateAndReportPermissions(
+        stageObserver: SyncStageObserver?,
+    ): HealthPermissionsState {
         val permStageStart = System.currentTimeMillis()
         stageObserver?.onStageStarted("healthconnect.permissions")
         val currentAvailability = availability()
@@ -217,49 +247,71 @@ open class HealthConnectGateway(private val context: Context?) {
                 "hc.history_granted" to historyGranted,
             ),
         )
+        return HealthPermissionsState(
+            currentAvailability = currentAvailability,
+            canReadSleep = canReadSleep,
+            canReadHeartRate = canReadHeartRate,
+            canReadBasalRate = canReadBasalRate,
+            canReadIntensity = canReadIntensity,
+            intensitySupported = intensitySupported,
+            canReadNutrition = canReadNutrition,
+            canReadTotalCalories = canReadTotalCalories,
+            bgGranted = bgGranted,
+            historyGranted = historyGranted,
+        )
+    }
 
-        val endDateExclusive = LocalDate.now(zoneId).plusDays(1)
-        val startDate = endDateExclusive.minusDays(days)
-        val start = startDate.atStartOfDay(zoneId).toInstant()
-        val end = endDateExclusive.atStartOfDay(zoneId).toInstant()
-
+    private suspend fun readRawRecords(
+        start: Instant,
+        end: Instant,
+        startDate: LocalDate,
+        days: Long,
+        zoneId: ZoneId,
+        perms: HealthPermissionsState,
+        stageObserver: SyncStageObserver?,
+    ): RawHealthRecords {
         val readStageStart = System.currentTimeMillis()
         stageObserver?.onStageStarted("healthconnect.read")
-        val weights = readAll<WeightRecord>(start, end)
-        val bodyFats = readAll<BodyFatRecord>(start, end)
+        val weights = readAll(WeightRecord::class, start, end)
+        val bodyFats = readAll(BodyFatRecord::class, start, end)
         // Diagnose all writers; only Xiaomi records contribute to health values.
         val exerciseReadStart = start.minus(Duration.ofDays(1))
-        val allExercises = readAll<ExerciseSessionRecord>(exerciseReadStart, end, unfiltered = true)
+        val allExercises = readAll(ExerciseSessionRecord::class, exerciseReadStart, end, unfiltered = true)
         val exercises = allExercises.filter {
             it.metadata.dataOrigin.packageName == WearableSourcePolicy.PACKAGE &&
                 HealthRecordEvidencePolicy.overlaps(it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), start.toEpochMilli(), end.toEpochMilli())
         }
-        val totalCalorieRecords = readIfGranted<TotalCaloriesBurnedRecord>(canReadTotalCalories, start, end)
-        val stepRecords = readAll<StepsRecord>(start, end)
-        val distanceRecords = readAll<DistanceRecord>(start, end)
-        val activeCalorieRecords = readAll<ActiveCaloriesBurnedRecord>(start, end)
-        val sleepRecords = readIfGranted<SleepSessionRecord>(
-            canReadSleep,
+        val totalCalorieRecords = readIfGranted(perms.canReadTotalCalories, TotalCaloriesBurnedRecord::class, start, end)
+        val stepRecords = readAll(StepsRecord::class, start, end)
+        val distanceRecords = readAll(DistanceRecord::class, start, end)
+        val activeCalorieRecords = readAll(ActiveCaloriesBurnedRecord::class, start, end)
+        val sleepRecords = readIfGranted(
+            perms.canReadSleep,
+            SleepSessionRecord::class,
             start.minus(Duration.ofDays(1)),
             end,
         )
-        val heartRateRecords = readIfGranted<HeartRateRecord>(
-            canReadHeartRate,
+        val heartRateRecords = readIfGranted(
+            perms.canReadHeartRate,
+            HeartRateRecord::class,
             start.minus(Duration.ofDays(1)),
             end,
         )
-        val basalRateRecords = readIfGranted<BasalMetabolicRateRecord>(
-            canReadBasalRate,
+        val basalRateRecords = readIfGranted(
+            perms.canReadBasalRate,
+            BasalMetabolicRateRecord::class,
             start,
             end,
         )
-        val intensityRecords = readIfGranted<ActivityIntensityRecord>(
-            canReadIntensity,
+        val intensityRecords = readIfGranted(
+            perms.canReadIntensity,
+            ActivityIntensityRecord::class,
             start,
             end,
         )
-        val nutritionRecords = readIfGranted<NutritionRecord>(
-            canReadNutrition,
+        val nutritionRecords = readIfGranted(
+            perms.canReadNutrition,
+            NutritionRecord::class,
             start,
             end,
         )
@@ -270,9 +322,9 @@ open class HealthConnectGateway(private val context: Context?) {
             aggregateDaily(
                 start = dayStart,
                 end = dayEnd,
-                includeHeartRate = canReadHeartRate,
-                includeIntensity = canReadIntensity,
-                includeNutrition = canReadNutrition,
+                includeHeartRate = perms.canReadHeartRate,
+                includeIntensity = perms.canReadIntensity,
+                includeNutrition = perms.canReadNutrition,
             )
         }
         val readStageEnd = System.currentTimeMillis().coerceAtLeast(readStageStart)
@@ -298,11 +350,38 @@ open class HealthConnectGateway(private val context: Context?) {
                 "records.nutrition" to nutritionRecords.size.toLong(),
             ),
         )
+        return RawHealthRecords(
+            weights = weights,
+            bodyFats = bodyFats,
+            allExercises = allExercises,
+            exercises = exercises,
+            totalCalorieRecords = totalCalorieRecords,
+            stepRecords = stepRecords,
+            distanceRecords = distanceRecords,
+            activeCalorieRecords = activeCalorieRecords,
+            sleepRecords = sleepRecords,
+            heartRateRecords = heartRateRecords,
+            basalRateRecords = basalRateRecords,
+            intensityRecords = intensityRecords,
+            nutritionRecords = nutritionRecords,
+            dailyAggregations = dailyAggregations,
+        )
+    }
 
-        val estimateStageStart = System.currentTimeMillis()
-        stageObserver?.onStageStarted("energy.estimate")
+    private fun processSyncBundle(
+        startDate: LocalDate,
+        days: Long,
+        zoneId: ZoneId,
+        start: Instant,
+        end: Instant,
+        heightCm: Double?,
+        sex: String?,
+        ageYears: Int?,
+        perms: HealthPermissionsState,
+        raw: RawHealthRecords,
+    ): ProcessedSyncBundle {
         val nutritionMeals = NutritionMealClusterer.cluster(
-            nutritionRecords.map { record ->
+            raw.nutritionRecords.map { record ->
                 NutritionRecordSnapshot(
                     startEpochMillis = record.startTime.toEpochMilli(),
                     endEpochMillis = record.endTime.toEpochMilli(),
@@ -324,7 +403,7 @@ open class HealthConnectGateway(private val context: Context?) {
             val date = startDate.plusDays(offset)
             val dayStart = date.atStartOfDay(zoneId).toInstant()
             val dayEnd = date.plusDays(1).atStartOfDay(zoneId).toInstant()
-            val sleepCandidates = sleepRecords.filter { it.endTime > dayStart && it.endTime <= dayEnd }
+            val sleepCandidates = raw.sleepRecords.filter { it.endTime > dayStart && it.endTime <= dayEnd }
             val preferredSleep = sleepCandidates.filter { it.metadata.dataOrigin.packageName == "com.xiaomi.wearable" }
             val mainSleep = preferredSleep.ifEmpty { sleepCandidates }
                 .maxByOrNull { Duration.between(it.startTime, it.endTime) }
@@ -346,17 +425,17 @@ open class HealthConnectGateway(private val context: Context?) {
                 )
             }
             val sleepHeartRateSamples = mainSleep?.let { sleep ->
-                heartRateRecords.flatMap { it.samples }.filter { sample ->
+                raw.heartRateRecords.flatMap { it.samples }.filter { sample ->
                     sample.time >= sleep.startTime && sample.time <= sleep.endTime
                 }
             }.orEmpty()
-            val (result, otherResult) = dailyAggregations[offset.toInt()]
-            val sessions = exercises.filter { session ->
+            val (result, otherResult) = raw.dailyAggregations[offset.toInt()]
+            val sessions = raw.exercises.filter { session ->
                 HealthRecordEvidencePolicy.overlaps(session.startTime.toEpochMilli(), session.endTime.toEpochMilli(), dayStart.toEpochMilli(), dayEnd.toEpochMilli())
             }
             fun minutesFor(selected: List<ExerciseSessionRecord>) = IntervalDuration.unionMinutes(dayStart, dayEnd,
                 selected.map { SleepInterval(it.startTime, it.endTime) })
-            val basalRate = HealthRecordEvidencePolicy.basalRate(basalRateRecords.map {
+            val basalRate = HealthRecordEvidencePolicy.basalRate(raw.basalRateRecords.map {
                 RecordedBasalRate(it.metadata.dataOrigin.packageName, it.time.toEpochMilli(), it.basalMetabolicRate.inKilocaloriesPerDay)
             }, WearableSourcePolicy.PACKAGE, dayEnd.toEpochMilli())
             val strengthMinutes = minutesFor(sessions.filter { classifyExerciseSession(it.exerciseType, it.startTime, it.endTime, zoneId) == ExerciseClass.STRENGTH })
@@ -365,25 +444,25 @@ open class HealthConnectGateway(private val context: Context?) {
             val cyclingMinutes = IntervalDuration.unionMinutes(
                 dayStart,
                 dayEnd,
-                exercises.filter { session ->
+                raw.exercises.filter { session ->
                     session.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_BIKING ||
                         session.exerciseType == ExerciseSessionRecord.EXERCISE_TYPE_BIKING_STATIONARY
                 }.map { SleepInterval(it.startTime, it.endTime) },
             )
             val allMinutes = minutesFor(sessions)
-            val dayNutrition = nutritionRecords.filter { it.startTime >= dayStart && it.startTime < dayEnd }
-            val dayHeartRecords = heartRateRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }
+            val dayNutrition = raw.nutritionRecords.filter { it.startTime >= dayStart && it.startTime < dayEnd }
+            val dayHeartRecords = raw.heartRateRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }
             val dayHeartSamples = dayHeartRecords.flatMap { it.samples }.filter { it.time >= dayStart && it.time < dayEnd }
             val outsideExerciseSamples = dayHeartSamples.count { sample ->
-                exercises.none { sample.time >= it.startTime && sample.time < it.endTime }
+                raw.exercises.none { sample.time >= it.startTime && sample.time < it.endTime }
             }
             // Bodyweight from the preceding seven days, or most recent within 30 days.
             // Do not use future weigh-ins for a past day's energy calculation.
-            val recentWeight = weights.filter {
+            val recentWeight = raw.weights.filter {
                 it.time < dayEnd && it.time >= dayEnd.minus(Duration.ofDays(7))
             }.map { it.weight.inKilograms }.filter { it in 20.0..400.0 }
             val weightForAssist = TrendMath.median(recentWeight)
-                ?: weights.filter { it.time < dayEnd && it.time >= dayEnd.minus(Duration.ofDays(30)) }
+                ?: raw.weights.filter { it.time < dayEnd && it.time >= dayEnd.minus(Duration.ofDays(30)) }
                     .maxByOrNull { it.time }?.weight?.inKilograms
             val assist = ActivityEnergyAssist.estimate(
                 dayStartMs = dayStart.toEpochMilli(),
@@ -393,7 +472,7 @@ open class HealthConnectGateway(private val context: Context?) {
                 sex = sex,
                 ageYears = ageYears,
                 dailySteps = result[StepsRecord.COUNT_TOTAL],
-                stepIntervals = stepRecords.filter {
+                stepIntervals = raw.stepRecords.filter {
                     it.startTime < dayEnd && it.endTime > dayStart
                 }.map {
                     ActivityEnergyAssist.Steps(
@@ -419,7 +498,7 @@ open class HealthConnectGateway(private val context: Context?) {
                 put("wearableSourcePolicy", "xiaomi_only_v1")
                 put("basalValueSource", if (basalRate == null) "missing_xiaomi_record" else "xiaomi_record_rate_kcal_per_day")
                 put("exerciseSourceAudit", buildJsonArray {
-                    HealthRecordEvidencePolicy.audit(allExercises.map {
+                    HealthRecordEvidencePolicy.audit(raw.allExercises.map {
                         SourceIntervalEvidence(it.metadata.dataOrigin.packageName, it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.metadata.lastModifiedTime.toEpochMilli())
                     }, dayStart.toEpochMilli(), dayEnd.toEpochMilli()).forEach { audit ->
                         add(buildJsonObject {
@@ -430,8 +509,8 @@ open class HealthConnectGateway(private val context: Context?) {
                     }
                 })
                 put("exerciseSelectedRecordCount", sessions.size)
-                put("totalCaloriesPermissionGranted", canReadTotalCalories)
-                val rawTotals = totalCalorieRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }
+                put("totalCaloriesPermissionGranted", perms.canReadTotalCalories)
+                val rawTotals = raw.totalCalorieRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }
                 put("totalCaloriesRawRecordCount", rawTotals.size)
                 put("totalCaloriesRawSamples", buildJsonArray {
                     rawTotals.take(6).forEach { record -> add(buildJsonObject {
@@ -447,9 +526,9 @@ open class HealthConnectGateway(private val context: Context?) {
                 fun candidates(name: String, origins: List<String>) {
                     put(name, buildJsonArray { origins.distinct().sorted().forEach { add(JsonPrimitive(it)) } })
                 }
-                candidates("stepsCandidates", stepRecords.inDay(dayStart, dayEnd) { it.startTime }.map { it.metadata.dataOrigin.packageName })
-                candidates("distanceCandidates", distanceRecords.inDay(dayStart, dayEnd) { it.startTime }.map { it.metadata.dataOrigin.packageName })
-                candidates("activeCaloriesCandidates", activeCalorieRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }.map { it.metadata.dataOrigin.packageName })
+                candidates("stepsCandidates", raw.stepRecords.inDay(dayStart, dayEnd) { it.startTime }.map { it.metadata.dataOrigin.packageName })
+                candidates("distanceCandidates", raw.distanceRecords.inDay(dayStart, dayEnd) { it.startTime }.map { it.metadata.dataOrigin.packageName })
+                candidates("activeCaloriesCandidates", raw.activeCalorieRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }.map { it.metadata.dataOrigin.packageName })
                 candidates("heartRateCandidates", dayHeartRecords.map { it.metadata.dataOrigin.packageName })
                 candidates("nutritionCandidates", dayNutrition.map { it.metadata.dataOrigin.packageName })
                 mainSleep?.let { put("selectedSleepOrigin", it.metadata.dataOrigin.packageName) }
@@ -457,23 +536,23 @@ open class HealthConnectGateway(private val context: Context?) {
             }.toString()
             val origins = buildList {
                 addAll(sessions.map { it.metadata.dataOrigin.packageName })
-                addAll(stepRecords.inDay(dayStart, dayEnd) { it.startTime }
+                addAll(raw.stepRecords.inDay(dayStart, dayEnd) { it.startTime }
                     .map { it.metadata.dataOrigin.packageName })
-                addAll(distanceRecords.inDay(dayStart, dayEnd) { it.startTime }
+                addAll(raw.distanceRecords.inDay(dayStart, dayEnd) { it.startTime }
                     .map { it.metadata.dataOrigin.packageName })
-                addAll(activeCalorieRecords.inDay(dayStart, dayEnd) { it.startTime }
+                addAll(raw.activeCalorieRecords.inDay(dayStart, dayEnd) { it.startTime }
                     .map { it.metadata.dataOrigin.packageName })
-                addAll(sleepRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }
+                addAll(raw.sleepRecords.filter { it.startTime < dayEnd && it.endTime > dayStart }
                     .map { it.metadata.dataOrigin.packageName })
-                addAll(heartRateRecords.filter {
+                addAll(raw.heartRateRecords.filter {
                     it.startTime < dayEnd && it.endTime > dayStart
                 }.map { it.metadata.dataOrigin.packageName })
-                addAll(basalRateRecords.inDay(dayStart, dayEnd) { it.time }
+                addAll(raw.basalRateRecords.inDay(dayStart, dayEnd) { it.time }
                     .map { it.metadata.dataOrigin.packageName })
-                addAll(intensityRecords.filter {
+                addAll(raw.intensityRecords.filter {
                     it.startTime < dayEnd && it.endTime > dayStart
                 }.map { it.metadata.dataOrigin.packageName })
-                addAll(nutritionRecords.filter {
+                addAll(raw.nutritionRecords.filter {
                     it.startTime < dayEnd && it.endTime > dayStart
                 }.map { it.metadata.dataOrigin.packageName })
             }.distinct().sorted().joinToString(", ")
@@ -544,14 +623,14 @@ open class HealthConnectGateway(private val context: Context?) {
             val dayStart = date.atStartOfDay(zoneId).toInstant()
             val dayEnd = date.plusDays(1).atStartOfDay(zoneId).toInstant()
             val calculation = BodyCompositionCalculator.calculate(
-                weights = weights.filterIn(dayStart, dayEnd) {
+                weights = raw.weights.filterIn(dayStart, dayEnd) {
                     TimedMeasurement(
                         it.time.toEpochMilli(),
                         it.weight.inKilograms,
                         it.metadata.dataOrigin.packageName,
                     )
                 },
-                bodyFatPercentages = bodyFats.filterIn(dayStart, dayEnd) {
+                bodyFatPercentages = raw.bodyFats.filterIn(dayStart, dayEnd) {
                     TimedMeasurement(
                         it.time.toEpochMilli(),
                         it.percentage.value,
@@ -574,8 +653,8 @@ open class HealthConnectGateway(private val context: Context?) {
 
         val checkedAt = System.currentTimeMillis()
         val sources = listOf(
-            sourceStatus("体重", weights, { it.time }, { it.metadata.dataOrigin.packageName }, checkedAt),
-            sourceStatus("体脂肪率", bodyFats, { it.time }, { it.metadata.dataOrigin.packageName }, checkedAt),
+            sourceStatus("体重", raw.weights, { it.time }, { it.metadata.dataOrigin.packageName }, checkedAt),
+            sourceStatus("体脂肪率", raw.bodyFats, { it.time }, { it.metadata.dataOrigin.packageName }, checkedAt),
             HealthSourceStatusEntity(
                 recordType = "除脂肪量（計算）",
                 recordCount = body.count { it.leanBodyMassKg != null },
@@ -586,79 +665,79 @@ open class HealthConnectGateway(private val context: Context?) {
                 status = if (body.any { it.leanBodyMassKg != null }) "計算可能" else "未取得",
                 checkedAtEpochMillis = checkedAt,
             ),
-            sourceStatus("運動セッション（取得元診断）", allExercises, { it.endTime }, { it.metadata.dataOrigin.packageName }, checkedAt),
-            sourceStatus("総消費（元記録診断）", totalCalorieRecords, { it.endTime }, { it.metadata.dataOrigin.packageName }, checkedAt,
-                if (canReadTotalCalories) null else "権限なし"),
+            sourceStatus("運動セッション（取得元診断）", raw.allExercises, { it.endTime }, { it.metadata.dataOrigin.packageName }, checkedAt),
+            sourceStatus("総消費（元記録診断）", raw.totalCalorieRecords, { it.endTime }, { it.metadata.dataOrigin.packageName }, checkedAt,
+                if (perms.canReadTotalCalories) null else "権限なし"),
             sourceStatus(
                 "運動セッション",
-                exercises,
+                raw.exercises,
                 { it.startTime },
                 { it.metadata.dataOrigin.packageName },
                 checkedAt,
             ),
-            sourceStatus("歩数", stepRecords, { it.startTime }, { it.metadata.dataOrigin.packageName }, checkedAt),
-            sourceStatus("距離", distanceRecords, { it.startTime }, { it.metadata.dataOrigin.packageName }, checkedAt),
+            sourceStatus("歩数", raw.stepRecords, { it.startTime }, { it.metadata.dataOrigin.packageName }, checkedAt),
+            sourceStatus("距離", raw.distanceRecords, { it.startTime }, { it.metadata.dataOrigin.packageName }, checkedAt),
             sourceStatus(
                 "活動消費",
-                activeCalorieRecords,
+                raw.activeCalorieRecords,
                 { it.startTime },
                 { it.metadata.dataOrigin.packageName },
                 checkedAt,
             ),
             sourceStatus(
                 "睡眠",
-                sleepRecords,
+                raw.sleepRecords,
                 { it.endTime },
                 { it.metadata.dataOrigin.packageName },
                 checkedAt,
-                if (canReadSleep) null else "権限なし",
+                if (perms.canReadSleep) null else "権限なし",
             ),
             sourceStatus(
                 "心拍数",
-                heartRateRecords,
+                raw.heartRateRecords,
                 { it.endTime },
                 { it.metadata.dataOrigin.packageName },
                 checkedAt,
-                if (canReadHeartRate) null else "権限なし",
+                if (perms.canReadHeartRate) null else "権限なし",
             ),
             sourceStatus(
                 "基礎代謝",
-                basalRateRecords,
+                raw.basalRateRecords,
                 { it.time },
                 { it.metadata.dataOrigin.packageName },
                 checkedAt,
-                if (canReadBasalRate) null else "権限なし",
+                if (perms.canReadBasalRate) null else "権限なし",
             ),
             sourceStatus(
                 "アクティビティ強度",
-                intensityRecords,
+                raw.intensityRecords,
                 { it.endTime },
                 { it.metadata.dataOrigin.packageName },
                 checkedAt,
                 when {
-                    !intensitySupported -> "端末非対応"
-                    !canReadIntensity -> "権限なし"
+                    !perms.intensitySupported -> "端末非対応"
+                    !perms.canReadIntensity -> "権限なし"
                     else -> null
                 },
             ),
             sourceStatus(
                 "栄養（摂取）",
-                nutritionRecords,
+                raw.nutritionRecords,
                 { it.startTime },
                 { it.metadata.dataOrigin.packageName },
                 checkedAt,
-                if (canReadNutrition) null else "権限なし",
+                if (perms.canReadNutrition) null else "権限なし",
             ),
-            nutritionWriteShapeStatus(nutritionRecords, canReadNutrition, zoneId, checkedAt),
+            nutritionWriteShapeStatus(raw.nutritionRecords, perms.canReadNutrition, zoneId, checkedAt),
         )
 
-        val workoutsForAssociation = exercises.map {
+        val workoutsForAssociation = raw.exercises.map {
             WorkoutHeartAnalytics.Workout(
                 "${it.metadata.dataOrigin.packageName}:${it.metadata.id}",
                 it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.exerciseType
             )
         }
-        val heartRateSamples = heartRateRecords.flatMap { record ->
+        val heartRateSamples = raw.heartRateRecords.flatMap { record ->
             val id = "${record.metadata.dataOrigin.packageName}:${record.metadata.id}"
             // Restrict association candidates to the Health Connect record's time span
             // rather than scanning all workouts for every individual heart sample.
@@ -682,12 +761,12 @@ open class HealthConnectGateway(private val context: Context?) {
         }
         // The Room composite key deduplicates overlapping Health Connect records
         // on upsert. Avoid retaining a second large in-memory distinctBy set.
-        val exerciseSessions = exercises.map { session ->
+        val exerciseSessions = raw.exercises.map { session ->
             val workout = WorkoutHeartAnalytics.Workout(
                 "${session.metadata.dataOrigin.packageName}:${session.metadata.id}",
                 session.startTime.toEpochMilli(), session.endTime.toEpochMilli(), session.exerciseType
             )
-            val relatedHeart = heartRateRecords.asSequence()
+            val relatedHeart = raw.heartRateRecords.asSequence()
                 .filter { it.endTime.toEpochMilli() >= workout.startMs &&
                     it.startTime.toEpochMilli() <= workout.endMs + WorkoutHeartAnalytics.RECOVERY_WINDOW_MS }
                 .flatMap { it.samples.asSequence() }
@@ -742,32 +821,71 @@ open class HealthConnectGateway(private val context: Context?) {
                 isDailyRecord = meal.isDailyTotal,
             )
         }
+
+        return ProcessedSyncBundle(
+            bundle = HealthSyncBundle(
+                daily = daily,
+                body = body,
+                sources = sources,
+                exerciseSessions = exerciseSessions,
+                heartRateSamples = heartRateSamples,
+                nutritionMeals = mealEntities,
+                rangeStartEpochMillis = start.toEpochMilli(),
+                rangeEndEpochMillisExclusive = end.toEpochMilli(),
+            ),
+            sessionEstimateCount = assistPerSession.size,
+        )
+    }
+
+    open suspend fun sync(
+        days: Long = 28,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+        heightCm: Double? = null,
+        sex: String? = null,
+        ageYears: Int? = null,
+        stageObserver: SyncStageObserver? = null,
+    ): HealthSyncBundle {
+        val perms = validateAndReportPermissions(stageObserver)
+        val endDateExclusive = LocalDate.now(zoneId).plusDays(1)
+        val startDate = endDateExclusive.minusDays(days)
+        val start = startDate.atStartOfDay(zoneId).toInstant()
+        val end = endDateExclusive.atStartOfDay(zoneId).toInstant()
+
+        val raw = readRawRecords(start, end, startDate, days, zoneId, perms, stageObserver)
+
+        val estimateStageStart = System.currentTimeMillis()
+        stageObserver?.onStageStarted("energy.estimate")
+
+        val processed = processSyncBundle(
+            startDate = startDate,
+            days = days,
+            zoneId = zoneId,
+            start = start,
+            end = end,
+            heightCm = heightCm,
+            sex = sex,
+            ageYears = ageYears,
+            perms = perms,
+            raw = raw,
+        )
+
         val estimateStageEnd = System.currentTimeMillis().coerceAtLeast(estimateStageStart)
         stageObserver?.onStageCompleted(
             stage = "energy.estimate",
             startEpochMillis = estimateStageStart,
             endEpochMillis = estimateStageEnd,
             attributes = mapOf(
-                "days" to daily.size.toLong(),
-                "body" to body.size.toLong(),
-                "sessions" to exerciseSessions.size.toLong(),
-                "heartSamples" to heartRateSamples.size.toLong(),
-                "meals" to mealEntities.size.toLong(),
-                "assist.valid_days" to daily.count { it.assistedActiveCaloriesKcal != null }.toLong(),
-                "assist.sessions_estimated" to assistPerSession.size.toLong(),
+                "days" to processed.bundle.daily.size.toLong(),
+                "body" to processed.bundle.body.size.toLong(),
+                "sessions" to processed.bundle.exerciseSessions.size.toLong(),
+                "heartSamples" to processed.bundle.heartRateSamples.size.toLong(),
+                "meals" to processed.bundle.nutritionMeals.size.toLong(),
+                "assist.valid_days" to processed.bundle.daily.count { it.assistedActiveCaloriesKcal != null }.toLong(),
+                "assist.sessions_estimated" to processed.sessionEstimateCount.toLong(),
             ),
         )
 
-        return HealthSyncBundle(
-            daily = daily,
-            body = body,
-            sources = sources,
-            exerciseSessions = exerciseSessions,
-            heartRateSamples = heartRateSamples,
-            nutritionMeals = mealEntities,
-            rangeStartEpochMillis = start.toEpochMilli(),
-            rangeEndEpochMillisExclusive = end.toEpochMilli(),
-        )
+        return processed.bundle
     }
 
     /** Map Health Connect workout types to documented MET reference activities. */
@@ -841,13 +959,15 @@ open class HealthConnectGateway(private val context: Context?) {
         return wearable to other
     }
 
-    private suspend inline fun <reified T : Record> readIfGranted(
+    private suspend fun <T : Record> readIfGranted(
         granted: Boolean,
+        recordClass: kotlin.reflect.KClass<T>,
         start: Instant,
         end: Instant,
-    ): List<T> = if (granted) readAll(start, end) else emptyList()
+    ): List<T> = if (granted) readAll(recordClass, start, end) else emptyList()
 
-    private suspend inline fun <reified T : Record> readAll(
+    private suspend fun <T : Record> readAll(
+        recordClass: kotlin.reflect.KClass<T>,
         start: Instant,
         end: Instant,
         unfiltered: Boolean = false,
@@ -857,8 +977,8 @@ open class HealthConnectGateway(private val context: Context?) {
         do {
             val response = client.readRecords(
                 ReadRecordsRequest(
-                    recordType = T::class,
-                    dataOriginFilter = if (unfiltered) emptySet() else WearableSourcePolicy.originsFor(T::class),
+                    recordType = recordClass,
+                    dataOriginFilter = if (unfiltered) emptySet() else WearableSourcePolicy.originsFor(recordClass),
                     timeRangeFilter = TimeRangeFilter.between(start, end),
                     pageSize = 1000,
                     pageToken = pageToken,
