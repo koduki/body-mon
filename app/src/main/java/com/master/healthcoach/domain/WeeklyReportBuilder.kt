@@ -2,6 +2,7 @@ package com.master.healthcoach.domain
 
 import com.master.healthcoach.data.db.BodyCompositionEntity
 import com.master.healthcoach.data.db.DailyHealthSummaryEntity
+import com.master.healthcoach.data.db.ExerciseSessionEntity
 import com.master.healthcoach.data.db.GoalEntity
 import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
 import java.time.Instant
@@ -28,6 +29,7 @@ object WeeklyReportBuilder {
         goal: GoalEntity? = null,
         zoneId: ZoneId = ZoneId.systemDefault(),
         includeToday: Boolean = false,
+        exerciseSessions: List<ExerciseSessionEntity> = emptyList(),
     ): WeeklySnapshot {
         val periodEnd = if (includeToday) today else today.minusDays(1)
         val currentStart = periodEnd.minusDays(6)
@@ -171,6 +173,24 @@ object WeeklyReportBuilder {
         val observedZonesJson = if (zoneDays > 0) {
             observedZoneTotals.joinToString(prefix = "[", postfix = "]")
         } else null
+        val finishedWeekStartMs = currentStart.atStartOfDay(zoneId).toInstant().toEpochMilli()
+        val finishedWeekEndMs = periodEnd.plusDays(1).atStartOfDay(zoneId).toInstant().toEpochMilli()
+        val weekWorkouts = exerciseSessions.filter {
+            it.startEpochMillis >= finishedWeekStartMs && it.startEpochMillis < finishedWeekEndMs
+        }
+        val recovered = weekWorkouts.mapNotNull { it.recoveryDrop1MinBpm }
+        val comparisons = WorkoutHeartAnalytics.compare28Days(
+            exerciseSessions.map { item ->
+                WorkoutHeartAnalytics.ComparableWorkout(
+                    exerciseType = item.exerciseType,
+                    durationMinutes = item.durationMinutes,
+                    averageHeartBpm = item.workoutHeartAverageBpm,
+                    startMs = item.startEpochMillis,
+                    sampleCoverageMinutes = item.workoutHeartCoverageMinutes ?: 0,
+                )
+            },
+            rangeEndExclusiveMs = finishedWeekEndMs,
+        )
         val totalStrengthMinutes = currentDaily.sumOf { it.strengthMinutes }
         val totalCardioMinutes = currentDaily.sumOf { it.cardioMinutes }
         val totalOtherExerciseMinutes = currentDaily.sumOf {
@@ -250,6 +270,9 @@ object WeeklyReportBuilder {
             assistedHeartObservedMinutes = currentDaily.sumOf { it.assistedHeartObservedMinutes ?: 0 },
             assistedHeartAdjustedMinutes = currentDaily.sumOf { it.assistedHeartAdjustedMinutes ?: 0 },
             assistedZoneMinutesJson = observedZonesJson,
+            workoutRecovery1MinAverageBpm = recovered.takeIf { it.size >= 2 }?.average(),
+            workoutRecovery1MinMeasurementSessions = recovered.size,
+            workoutComparisons28d = comparisons,
             exerciseSessions = currentDaily.sumOf { it.exerciseSessionCount },
             exerciseMinutes = currentDaily.sumOf { it.exerciseMinutes },
             strengthMinutes = totalStrengthMinutes,
