@@ -3,6 +3,7 @@ package com.master.healthcoach.domain
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * Independent, above-rest ACTIVE-energy reference, not a calibration of Xiaomi calories.
@@ -111,9 +112,9 @@ object ActivityEnergyAssist {
         val endpoints = clipped.flatMap { listOf(it.startMs, it.endMs) }.distinct().sorted()
         data class MutableSession(
             var energy: Double = 0.0,
-            var observed: Int = 0,
-            var adjusted: Int = 0,
-            val zones: IntArray = IntArray(5),
+            var observedMillis: Long = 0,
+            var adjustedMillis: Long = 0,
+            val zoneMillis: LongArray = LongArray(5),
         )
         val perSession = linkedMapOf<String, MutableSession>()
         for (idx in 0 until endpoints.lastIndex) {
@@ -126,14 +127,20 @@ object ActivityEnergyAssist {
                 .firstOrNull() ?: continue
             val durationMinutes = (to - from) / 60_000.0
             val durationKcalFactor = weight * durationMinutes / 60.0
-            val observedMinutes = validHeart
+            // Count covered portions of absolute clock-minute buckets, not full
+            // minutes for every partial boundary. This prevents 13 sampled
+            // minute bins being reported as 13 minutes in a 12-minute workout.
+            val heartByMinute = validHeart
                 .asSequence().filter { it.timeMs >= from && it.timeMs < to }
-                .groupBy { (it.timeMs - from) / 60_000L }
-                .values.map { group -> group.map { it.bpm }.average() }
-            val zoneMinutes = IntArray(5)
-            if (maximumHr != null) {
-                observedMinutes.forEach { bpm ->
-                    val ratio = bpm / maximumHr
+                .groupBy { it.timeMs / 60_000L }
+            val observedMinutes = heartByMinute.values.map { group -> group.map { it.bpm }.average() }
+            var observedMillis = 0L
+            val zoneMillis = LongArray(5)
+            heartByMinute.forEach { (minute, group) ->
+                val covered = overlapMs(from, to, minute * 60_000L, (minute + 1) * 60_000L)
+                observedMillis += covered
+                if (maximumHr != null) {
+                    val ratio = group.map { it.bpm }.average() / maximumHr
                     val zone = when {
                         ratio < 0.60 -> 0
                         ratio < 0.70 -> 1
@@ -141,7 +148,7 @@ object ActivityEnergyAssist {
                         ratio < 0.90 -> 3
                         else -> 4
                     }
-                    zoneMinutes[zone]++
+                    zoneMillis[zone] += covered
                 }
             }
             val hasValidHeart = maximumHr != null &&
@@ -155,21 +162,23 @@ object ActivityEnergyAssist {
             val kcal = max(0.0, winner.activity.grossMet * heartFactor - 1.0) * durationKcalFactor
             val target = perSession.getOrPut(winner.id) { MutableSession() }
             target.energy += kcal
-            target.observed += observedMinutes.size
-            if (hasValidHeart) target.adjusted += ceil(durationMinutes).toInt()
-            for (z in 0..4) target.zones[z] += zoneMinutes[z]
+            target.observedMillis += observedMillis
+            if (hasValidHeart) target.adjustedMillis += to - from
+            for (z in 0..4) target.zoneMillis[z] += zoneMillis[z]
         }
         val sumWorkouts = perSession.values.sumOf { it.energy }
-        val zoneTotals = (0..4).map { z -> perSession.values.sumOf { it.zones[z] } }
+        fun wholeMinutes(millis: Long) = (millis / 60_000.0).roundToInt()
+        val zoneTotals = (0..4).map { z -> wholeMinutes(perSession.values.sumOf { it.zoneMillis[z] }) }
         return Result(
             activeKcal = walkingKcal + sumWorkouts,
             walkingKcal = walkingKcal,
             exerciseKcal = sumWorkouts,
-            heartObservedMinutes = perSession.values.sumOf { it.observed },
-            heartAdjustedMinutes = perSession.values.sumOf { it.adjusted },
+            heartObservedMinutes = wholeMinutes(perSession.values.sumOf { it.observedMillis }),
+            heartAdjustedMinutes = wholeMinutes(perSession.values.sumOf { it.adjustedMillis }),
             observedZoneMinutes = zoneTotals,
             sessions = perSession.mapValues { (_, v) ->
-                SessionResult(v.energy, v.observed, v.adjusted, v.zones.toList())
+                SessionResult(v.energy, wholeMinutes(v.observedMillis), wholeMinutes(v.adjustedMillis),
+                    (0..4).map { z -> wholeMinutes(v.zoneMillis[z]) })
             },
         )
     }
