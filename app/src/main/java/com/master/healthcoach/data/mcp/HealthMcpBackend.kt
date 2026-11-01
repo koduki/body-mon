@@ -8,6 +8,7 @@ import com.master.healthcoach.data.db.*
 import com.master.healthcoach.data.diagnostics.DiagnosticsStore
 import com.master.healthcoach.data.llm.*
 import com.master.healthcoach.domain.WeeklyReportBuilder
+import com.master.healthcoach.domain.WorkoutHeartAnalytics
 import kotlinx.serialization.json.*
 import java.security.MessageDigest
 import java.time.LocalDate
@@ -35,7 +36,7 @@ class HealthMcpBackend(
             val revision = dao.metadata("revision").orEmpty()
             val today = LocalDate.now()
             val to = date(args, "to", today)
-            val from = date(args, "from", to.minusDays(27))
+            val from = date(args, "from", if (name == "get_heart_rate_series") to else to.minusDays(27))
             if (from > to || ChronoUnit.DAYS.between(from, to) >= 90 || to > today) throw McpFailure("INVALID_RANGE")
             val zone = ZoneId.systemDefault()
             val start = from.atStartOfDay(zone).toInstant().toEpochMilli()
@@ -57,6 +58,31 @@ class HealthMcpBackend(
                     put("limitations", "BIA and energy expenditure are estimates. Origin candidates are not proven contributors. No automatic Health Connect refresh. Use GitHub at commitSha for code investigation.")
                 }
                 "get_profile_and_goals" -> json.encodeToJsonElement(dao.getGoal())
+                "get_workout_hr_comparison" -> {
+                    val periodEnd = date(args, "to", today.minusDays(1))
+                    if (periodEnd >= today) throw McpFailure("INVALID_RANGE")
+                    val analysisFrom = periodEnd.minusDays(27)
+                    val fromMs = analysisFrom.atStartOfDay(zone).toInstant().toEpochMilli()
+                    val endExclusiveMs = periodEnd.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                    val rows = dao.getExerciseSessions(fromMs, endExclusiveMs - 1)
+                    val comparison = WorkoutHeartAnalytics.compare28Days(rows.map {
+                        WorkoutHeartAnalytics.ComparableWorkout(
+                            it.exerciseType, it.durationMinutes, it.workoutHeartAverageBpm,
+                            it.startEpochMillis, it.workoutHeartCoverageMinutes ?: 0,
+                        )
+                    }, endExclusiveMs)
+                    val measuredDrops = rows.mapNotNull { it.recoveryDrop1MinBpm }
+                    effectiveFrom = analysisFrom.toString(); effectiveTo = periodEnd.toString()
+                    buildJsonObject {
+                        put("periodStart", analysisFrom.toString())
+                        put("periodEnd", periodEnd.toString())
+                        put("workoutCount", rows.size)
+                        put("recovery1MinObservedSessions", measuredDrops.size)
+                        put("recovery1MinMeanDropBpm", measuredDrops.takeIf { it.size >= 2 }?.average()?.let(::JsonPrimitive) ?: JsonNull)
+                        put("comparisons", json.encodeToJsonElement(comparison))
+                        put("limitations", "Duration and exercise type only; speed, slope, power, temperature, sleep, medication, and sensor calibration are unknown. No clinical or VO2max inference. Null means insufficient observations.")
+                    }
+                }
                 "get_heart_rate_series" -> {
                     val sessionId = args.string("sessionId")
                     // Month-wide raw data can be large. Use indexed paging or 1..60 minute buckets.
@@ -220,7 +246,7 @@ class HealthMcpBackend(
                 }
                 else -> throw McpFailure("UNKNOWN_TOOL")
             }
-            val periodFiltered = name in setOf("get_heart_rate_series", "get_health_metrics", "get_data_quality", "list_weekly_reports", "search_conversations", "get_app_diagnostics", "list_app_events")
+            val periodFiltered = name in setOf("get_workout_hr_comparison", "get_heart_rate_series", "get_health_metrics", "get_data_quality", "list_weekly_reports", "search_conversations", "get_app_diagnostics", "list_app_events")
             if (name == "get_weekly_report") {
                 val snapshot = (data as? JsonObject)?.get("snapshot") as? JsonObject
                 effectiveFrom = snapshot?.string("weekStart").orEmpty()
