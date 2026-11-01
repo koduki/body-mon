@@ -30,6 +30,8 @@ import com.master.healthcoach.data.db.NutritionMealEntity
 import com.master.healthcoach.domain.HealthRecordEvidencePolicy
 import com.master.healthcoach.domain.SourceIntervalEvidence
 import com.master.healthcoach.domain.RecordedBasalRate
+import com.master.healthcoach.domain.WorkoutHeartAnalytics
+import com.master.healthcoach.data.db.HeartRateSampleEntity
 import com.master.healthcoach.domain.ActivityEnergyAssist
 import com.master.healthcoach.domain.BodyCompositionCalculator
 import com.master.healthcoach.domain.NutritionInterval
@@ -57,6 +59,7 @@ data class HealthSyncBundle(
     val body: List<BodyCompositionEntity>,
     val sources: List<HealthSourceStatusEntity>,
     val exerciseSessions: List<ExerciseSessionEntity>,
+    val heartRateSamples: List<HeartRateSampleEntity>,
     val nutritionMeals: List<NutritionMealEntity>,
     val rangeStartEpochMillis: Long,
     val rangeEndEpochMillisExclusive: Long,
@@ -574,7 +577,39 @@ class HealthConnectGateway(private val context: Context) {
             nutritionWriteShapeStatus(nutritionRecords, canReadNutrition, zoneId, checkedAt),
         )
 
+        val workoutsForAssociation = exercises.map {
+            WorkoutHeartAnalytics.Workout(
+                "${it.metadata.dataOrigin.packageName}:${it.metadata.id}",
+                it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.exerciseType
+            )
+        }
+        val allObservedHeart = heartRateRecords.flatMap { record ->
+            record.samples.map { sample ->
+                WorkoutHeartAnalytics.Heart(sample.time.toEpochMilli(), sample.beatsPerMinute)
+            }
+        }
+        val heartRateSamples = heartRateRecords.flatMap { record ->
+            val id = "${record.metadata.dataOrigin.packageName}:${record.metadata.id}"
+            record.samples.mapNotNull { point ->
+                val millis = point.time.toEpochMilli()
+                if (millis < start.toEpochMilli() || millis >= end.toEpochMilli()) null
+                else {
+                    val association = WorkoutHeartAnalytics.associate(millis, workoutsForAssociation)
+                    HeartRateSampleEntity(
+                        sourceRecordId = id, timestampEpochMillis = millis,
+                        bpm = point.beatsPerMinute,
+                        dataOrigin = record.metadata.dataOrigin.packageName,
+                        sessionId = association.sessionId, phase = association.phase,
+                    )
+                }
+            }
+        }.distinctBy { Triple(it.sourceRecordId, it.timestampEpochMillis, it.bpm) }
         val exerciseSessions = exercises.map { session ->
+            val workout = WorkoutHeartAnalytics.Workout(
+                "${session.metadata.dataOrigin.packageName}:${session.metadata.id}",
+                session.startTime.toEpochMilli(), session.endTime.toEpochMilli(), session.exerciseType
+            )
+            val heart = WorkoutHeartAnalytics.recovery(workout, allObservedHeart)
             val origin = session.metadata.dataOrigin.packageName
             ExerciseSessionEntity(
                 recordId = "$origin:${session.metadata.id}",
@@ -599,6 +634,10 @@ class HealthConnectGateway(private val context: Context) {
                         (0..4).map { index -> parts.sumOf { it.observedZoneMinutes[index] } }
                             .joinToString(prefix = "[", postfix = "]")
                     },
+                workoutHeartAverageBpm = heart.heartAverageBpm,
+                workoutHeartCoverageMinutes = heart.coverageMinutes,
+                recoveryDrop1MinBpm = heart.drop1MinBpm,
+                recoveryDrop2MinBpm = heart.drop2MinBpm,
             )
         }
         val mealEntities = nutritionMeals.mapIndexed { index, meal ->
@@ -624,6 +663,7 @@ class HealthConnectGateway(private val context: Context) {
             body = body,
             sources = sources,
             exerciseSessions = exerciseSessions,
+            heartRateSamples = heartRateSamples,
             nutritionMeals = mealEntities,
             rangeStartEpochMillis = start.toEpochMilli(),
             rangeEndEpochMillisExclusive = end.toEpochMilli(),
