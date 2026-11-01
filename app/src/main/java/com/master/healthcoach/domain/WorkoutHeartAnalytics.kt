@@ -1,5 +1,6 @@
 package com.master.healthcoach.domain
 
+import kotlinx.serialization.Serializable
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -67,6 +68,7 @@ object WorkoutHeartAnalytics {
         val startMs: Long,
         val sampleCoverageMinutes: Int,
     )
+    @Serializable
     data class Comparison(
         val exerciseType: Int,
         val recentCount: Int,
