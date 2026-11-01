@@ -2,6 +2,7 @@ package com.master.healthcoach.data.db
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import kotlinx.serialization.Serializable
 
@@ -207,3 +208,26 @@ data class ReportArchiveEntity(
 
 @Entity(tableName = "app_metadata")
 data class AppMetadataEntity(@PrimaryKey val key: String, val value: String)
+
+/**
+ * Original Xiaomi Health Connect HR samples. One point per source record/time/bpm;
+ * repeat syncs replace the same primary key instead of creating duplicates.
+ * phase is a temporal observation, NOT a medical resting-heart-rate label.
+ */
+@Serializable
+@Entity(
+    tableName = "heart_rate_samples",
+    primaryKeys = ["sourceRecordId", "timestampEpochMillis", "bpm"],
+    indices = [
+        Index(value = ["timestampEpochMillis"]),
+        Index(value = ["sessionId", "timestampEpochMillis"]),
+    ],
+)
+data class HeartRateSampleEntity(
+    val sourceRecordId: String,
+    val timestampEpochMillis: Long,
+    val bpm: Long,
+    val dataOrigin: String,
+    val sessionId: String? = null,
+    val phase: String = "unclassified",
+)
