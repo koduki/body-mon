@@ -188,7 +188,10 @@ fun HealthCoachRoot(
                     Column {
                         Text(if (selectedTab == AppTab.CHAT) "健康コーチ" else "Health Coach", fontWeight = FontWeight.SemiBold)
                         Text(
-                            if (selectedTab == AppTab.CHAT) "体の変化を一緒に確認" else if (state.isSyncing) "${selectedTab.label} · データを同期中" else "${selectedTab.label} · データは前回の同期時点",
+                            if (selectedTab == AppTab.CHAT) "体の変化を一緒に確認" else if (state.isSyncing) "${selectedTab.label} · 同期中" else
+                                state.daily.maxOfOrNull { it.updatedAtEpochMillis }?.let {
+                                    "${selectedTab.label} · データ反映 ${formatInstant(it)}"
+                                } ?: "${selectedTab.label} · 未同期",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -381,7 +384,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         item {
             SectionHeader(
                 "今日の記録",
-                "今日の途中経過です。最終同期後の記録はまだ反映されていません",
+                "当日値は同期時点までの途中経過です",
             )
         }
         item {
@@ -1883,6 +1886,9 @@ private fun SettingsScreen(
     var apiKey by rememberSaveable { mutableStateOf("") }
     var model by rememberSaveable(state.modelId) { mutableStateOf(state.modelId) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var showChatGptSettings by rememberSaveable { mutableStateOf(false) }
+    var showSourceDetails by rememberSaveable { mutableStateOf(false) }
+    var showConversationMemory by rememberSaveable { mutableStateOf(false) }
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
@@ -1895,7 +1901,6 @@ private fun SettingsScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp, 10.dp, 16.dp, 34.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        TunnelSettingsCard()
         SectionHeader("プロフィールと目標", "会話で伝えた年齢・身長・性別も反映されます。違う場合はここで修正できます")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SmallField(age, { age = it }, "年齢", Modifier.weight(1f), KeyboardType.Number)
@@ -1970,6 +1975,13 @@ private fun SettingsScreen(
         ) { Text("目標を保存") }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        SectionHeader("ChatGPTとの連携", "必要なときだけトンネルを起動し、共有範囲を選べます")
+        TextButton(onClick = { showChatGptSettings = !showChatGptSettings }) {
+            Text(if (showChatGptSettings) "ChatGPT連携の詳細を閉じる" else "ChatGPT連携・診断ログの設定を開く")
+        }
+        if (showChatGptSettings) TunnelSettingsCard()
+
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
         SectionHeader("Gemini API", "キーはAndroid Keystoreで暗号化し、この端末だけに保存します")
         OutlinedTextField(
             value = apiKey,
@@ -1992,9 +2004,19 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        UnavailableMetricsNotice()
-        SectionHeader("実機データ診断", "Mi Fitness、eufy、あすけんが実際に書いた項目と、栄養の書込粒度を確認します")
-        state.sources.forEach { source ->
+        SectionHeader("Health Connect", "連携状態とデータの不足を確認")
+        Text(
+            "取得できる項目 ${state.sources.count { it.status == "取得可能" || it.status == "計算可能" }}件・" +
+                "未取得/権限不足 ${state.sources.count { it.status != "取得可能" && it.status != "計算可能" }}件",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        TextButton(onClick = { showSourceDetails = !showSourceDetails }) {
+            Text(if (showSourceDetails) "元データの一覧を閉じる" else "元データの取得状況を見る")
+        }
+        if (showSourceDetails) {
+            UnavailableMetricsNotice()
+            SectionHeader("取得元の詳細", "Mi Fitness、eufy、あすけんの実際の提供状況")
+            state.sources.forEach { source ->
             Card {
                 Row(
                     Modifier.fillMaxWidth().padding(14.dp),
@@ -2026,7 +2048,8 @@ private fun SettingsScreen(
                 }
             }
         }
-        if (state.sources.isEmpty()) Text("同期後に診断結果が表示されます。")
+            if (state.sources.isEmpty()) Text("同期後に診断結果が表示されます。")
+        }
         if (!state.grantedPermissions.containsAll(state.requiredPermissions)) {
             Button(onClick = onRequestPermissions, modifier = Modifier.fillMaxWidth()) {
                 Text("総消費・睡眠・心拍などの権限を許可")
@@ -2037,11 +2060,11 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        SectionHeader(
-            "会話メモリー",
-            "チャット画面は直近20件を表示し、28日分の履歴を保持します。古い会話は習慣・制約の要約としてここに残ります",
-        )
-        Card(
+        SectionHeader("会話メモリー", "AIが参照する習慣・制約の要約")
+        TextButton(onClick = { showConversationMemory = !showConversationMemory }) {
+            Text(if (showConversationMemory) "会話メモリーを閉じる" else "保存された会話メモリーを見る")
+        }
+        if (showConversationMemory) Card(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
             ),
@@ -2153,19 +2176,26 @@ private fun hideEmptyMetric(title: String, value: String): Boolean {
 @Composable
 private fun UnavailableMetricsNotice() {
     val limited = LocalMetricAvailability.current.filter { it.hideEmptyMetric }
-    if (limited.isEmpty()) {
-        if (LocalMetricAvailability.current.any { it.state == com.master.healthcoach.domain.MetricAvailabilityState.CHECKING }) {
-            Text("取得可否を確認中：30日分の同期後に、連携されていない項目を整理します。", style = MaterialTheme.typography.bodySmall)
-        }
-        return
-    }
+    if (limited.isEmpty()) return
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("現在の連携で使えない項目", fontWeight = FontWeight.SemiBold)
-            limited.groupBy { it.reason }.forEach { (reason, items) ->
-                Text(items.joinToString("・") { it.label } + "：" + reason, style = MaterialTheme.typography.bodySmall)
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("未連携の記録 ${limited.size}項目", style = MaterialTheme.typography.labelMedium)
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "閉じる" else "確認する")
+                }
             }
-            Text("値が届けば通常表示に戻ります。詳しくは設定の実機データ診断を確認してください。", style = MaterialTheme.typography.labelSmall)
+            if (expanded) {
+                limited.groupBy { it.reason }.forEach { (reason, items) ->
+                    Text(items.joinToString("・") { it.label } + "：" + reason,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Text("取得できない値は0として扱いません。設定のHealth Connectから取得元を確認できます。",
+                    style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
 }
