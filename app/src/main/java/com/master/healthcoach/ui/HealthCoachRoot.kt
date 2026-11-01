@@ -1171,6 +1171,7 @@ private fun WeeklyScreen(
     onExportWeeklyData: (Uri) -> Unit = {},
 ) {
     val report = state.weekly
+    var showWeeklyDetails by rememberSaveable { mutableStateOf(false) }
     val weeklyExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
@@ -1187,7 +1188,7 @@ private fun WeeklyScreen(
         item {
             SectionHeader(
                 "週次ボディメイクレビュー",
-                "カロリー収支と体重推移を対照し、脂肪減少と筋力維持の行動を確認",
+                "まず体組成の変化と生活習慣を確認。根拠が不足する指標は判定しません",
             )
         }
         if (report == null) {
@@ -1245,6 +1246,11 @@ private fun WeeklyScreen(
                 }
             }
 
+            item {
+                TextButton(onClick = { showWeeklyDetails = !showWeeklyDetails }) {
+                    Text(if (showWeeklyDetails) "詳細の指標を閉じる" else "測定の詳細も見る")
+                }
+            }
             item {
                 Card {
                     Column(
@@ -1317,7 +1323,8 @@ private fun WeeklyScreen(
                 }
             }
 
-            item {
+            if (report.nutritionCompleteDays > 0 && report.basalCaloriesMeasurementDays > 0 &&
+                report.referenceEnergyBalanceValidDays > 0) item {
                 val balanceAnalysis = EnergyBalanceWeightAnalyzer.analyze(report)
                 Card(
                     colors = CardDefaults.cardColors(
@@ -1446,7 +1453,7 @@ private fun WeeklyScreen(
                 }
             }
 
-            item {
+            if (showWeeklyDetails) item {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     val stepsDiff = compareDiff(report.stepsDailyAverage, report.previousWeekStepsDailyAverage)
                     ReportTile(
@@ -1570,7 +1577,7 @@ private fun WeeklyScreen(
                 }
             }
 
-            item {
+            if (showWeeklyDetails) item {
                 Card {
                     Column(
                         Modifier.padding(16.dp),
@@ -1607,7 +1614,11 @@ private fun WeeklyScreen(
                 }
             }
 
-            item {
+            if (report.nutritionMeasurementDays == 0) {
+                item {
+                    EmptyCard("今週の食事分析は保留", "摂取カロリー・PFCの有効な記録がありません。欠測を0として収支は計算しません。")
+                }
+            } else item {
                 Card {
                     Column(
                         Modifier.padding(16.dp),
@@ -1704,50 +1715,41 @@ private fun WeeklyScreen(
             }
 
             item {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-                ) {
-                    Column(
-                        Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        Text("参考値の内訳", fontWeight = FontWeight.SemiBold)
-                        val activeText = if (report.referenceActiveRangeLowKcal != null && report.referenceActiveRangeHighKcal != null) {
-                            EnergyRange(report.referenceActiveRangeLowKcal, report.referenceActiveRangeHighKcal).activeRangeLabel() + "/日（モデル・デバイス比較レンジ）"
-                        } else {
-                            report.activeCaloriesDailyAverage.kcal("/日")
+                ActivityEnergyComparisonCard(
+                    independentKcal = report.assistedActiveCaloriesDailyAverage,
+                    deviceKcal = report.activeCaloriesDailyAverage,
+                    basalKcal = report.basalCaloriesDailyAverage,
+                    title = "今週の活動消費（1日平均）",
+                    suffix = "/日",
+                )
+            }
+            if (showWeeklyDetails) {
+                item {
+                    Card {
+                        Column(Modifier.fillMaxWidth().padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("運動心拍の詳細", style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold)
+                            Text("心拍観測 ${report.assistedHeartObservedMinutes}分・活動推定への補正 ${report.assistedHeartAdjustedMinutes}分")
+                            report.workoutRecovery1MinAverageBpm?.let {
+                                Text("運動後1分の心拍低下：${it.roundToLong()} bpm（${report.workoutRecovery1MinMeasurementSessions}件・参考）")
+                            }
+                            report.workoutComparisons28d.forEach {
+                                Text("種目コード${it.exerciseType}：近7日と先21日の平均心拍差 ${signed(it.differenceBpm)} bpm（種目・時間のみ近似）",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            report.assistedZoneMinutesJson.heartZonesLabel()?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall)
+                            }
+                            Text("運動後回復や平均心拍だけで体力・疾患を判断しません。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(
-                            listOfNotNull(
-                                report.basalCaloriesDailyAverage?.let { "基礎代謝 ${it.kcal("/日")}" },
-                                "活動消費 $activeText",
-                                report.assistedActiveCaloriesDailyAverage?.let {
-                                    "独立補助推定 ${it.kcal("/日")}（${report.assistedActiveValidDays}日）"
-                                },
-                                "運動中心拍観測 ${report.assistedHeartObservedMinutes}分・MET補正適用 ${report.assistedHeartAdjustedMinutes}分",
-                                report.workoutRecovery1MinAverageBpm?.let {
-                                    "運動後1分の平均心拍低下 ${it.roundToLong()} bpm（${report.workoutRecovery1MinMeasurementSessions}セッション、参考）"
-                                },
-                                report.workoutComparisons28d.takeIf { it.isNotEmpty() }?.joinToString("／") {
-                                    "種目コード${it.exerciseType}の28日比較 ${if (it.differenceBpm >= 0) "+" else ""}${it.differenceBpm.roundToLong()} bpm（近7日${it.recentCount}件・先21日${it.referenceCount}件、時間のみ近似）"
-                                },
-                                report.assistedZoneMinutesJson.heartZonesLabel(),
-                            ).joinToString("・"),
-                        )
-                        Text(
-                            "上の「カロリー収支と体重の対照」で摂取との差を見ます。" +
-                                "Xiaomiは歩数のない活動も推定します。独立補助推定は運動と重なる歩数を除外し、運動種別/METと十分な運動中心拍を使います。" +
-                                    "未記録活動を過小に見積もる可能性があり、両者の差を過大評価の証明や真値の信頼区間とは扱いません。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                 }
             }
 
-            if (report.adaptiveTdeeLowKcal != null && report.adaptiveTdeeHighKcal != null) {
+            if (showWeeklyDetails && report.adaptiveTdeeLowKcal != null && report.adaptiveTdeeHighKcal != null) {
                 item {
                     Card(
                         colors = CardDefaults.cardColors(
@@ -1812,8 +1814,8 @@ private fun WeeklyScreen(
         state.weeklyAdvice?.let { advice ->
             item {
                 SectionHeader(
-                    "専門コーチ分析",
-                    "カロリー収支の比較と体重推移を軸に、低脂質・PFCも確認",
+                    "AIコーチの週次分析",
+                    "連携された記録とデータ不足を踏まえて提案を表示",
                 )
             }
             item {
