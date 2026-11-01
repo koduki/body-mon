@@ -116,6 +116,7 @@ import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.domain.EnergyBalanceWeightAnalyzer
 import com.master.healthcoach.domain.EnergyModel
+import com.master.healthcoach.domain.ActivityEnergyDisplayPolicy
 import com.master.healthcoach.domain.EnergyRange
 import com.master.healthcoach.domain.HealthDataExporter
 import com.master.healthcoach.domain.PfcBalance
@@ -187,7 +188,7 @@ fun HealthCoachRoot(
                     Column {
                         Text(if (selectedTab == AppTab.CHAT) "健康コーチ" else "Health Coach", fontWeight = FontWeight.SemiBold)
                         Text(
-                            if (selectedTab == AppTab.CHAT) "体の変化を一緒に確認" else "${selectedTab.label} · v${BuildConfig.VERSION_NAME}",
+                            if (selectedTab == AppTab.CHAT) "体の変化を一緒に確認" else if (state.isSyncing) "${selectedTab.label} · データを同期中" else "${selectedTab.label} · データは前回の同期時点",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -380,7 +381,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         item {
             SectionHeader(
                 "今日の記録",
-                "Health Connectの当日値を、平均や前週比へまとめず表示",
+                "今日の途中経過です。最終同期後の記録はまだ反映されていません",
             )
         }
         item {
@@ -480,7 +481,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
             }
         }
         item { SectionHeader("活動", if (todayDaily?.metricOriginsJson?.contains("xiaomi_only_v1") == true)
-            "Mi Fitnessのみ・未連携の項目は未取得" else "取得元の限定を反映するには同期してください") }
+            "Xiaomi由来の記録・今日の途中経過" else "取得元の限定を反映するには同期してください") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
@@ -500,72 +501,31 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "中強度",
-                    todayDaily?.moderateIntensityMinutes?.let { "$it 分" } ?: "未取得",
-                    "Health Connect記録",
-                    Modifier.weight(1f),
-                )
-                MetricCard(
-                    "高強度",
-                    todayDaily?.vigorousIntensityMinutes?.let { "$it 分" } ?: "未取得",
-                    "Health Connect記録",
-                    Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "活動消費",
-                    todayDaily?.activeCaloriesKcal?.roundToLong()?.let { "$it kcal" }
-                        ?: "未取得",
-                    "デバイス推定・参考",
-                    Modifier.weight(1f),
-                )
-                MetricCard(
-                    "基礎代謝",
-                    todayDaily?.basalCaloriesKcal.kcal(),
-                    "Mi Fitnessの元記録・kcal/日",
-                    Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "参考活動消費",
-                    todayActive?.range?.let { it.activeRangeLabel() } ?: "未取得",
-                    "独立補助推定（運動中心拍が十分なら補正）とデバイスの比較",
-                    Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "活動補助推定",
-                    todayDaily?.assistedActiveCaloriesKcal?.roundToLong()?.let { "$it kcal" } ?: "未算出",
-                    "歩数重複除外＋運動種別/MET＋運動中心拍",
-                    Modifier.weight(1f),
-                )
-                MetricCard(
-                    "心拍補正適用",
-                    todayDaily?.assistedHeartAdjustedMinutes?.let { "$it 分" } ?: "未取得",
-                    "運動中の心拍観測が十分な区間のみ",
-                    Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            Text(
-                EnergyModel.INTERPRETATION + " " + com.master.healthcoach.domain.ActivityEnergyAssist.INTERPRETATION,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            ActivityEnergyComparisonCard(
+                independentKcal = todayDaily?.assistedActiveCaloriesKcal,
+                deviceKcal = todayDaily?.activeCaloriesKcal,
+                adjustedHeartMinutes = todayDaily?.assistedHeartAdjustedMinutes,
+                walkingKcal = todayDaily?.assistedWalkingCaloriesKcal,
+                workoutKcal = todayDaily?.assistedExerciseCaloriesKcal,
+                basalKcal = todayDaily?.basalCaloriesKcal,
+                title = "今日の活動消費",
             )
         }
-        item { SectionHeader("食事・栄養", "日次の摂取量・PFCを確認。食事時刻・区分は現在未取得") }
+        if (todayDaily?.moderateIntensityMinutes != null || todayDaily?.vigorousIntensityMinutes != null) {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    MetricCard(
+                        "中強度", todayDaily?.moderateIntensityMinutes?.let { "$it 分" } ?: "未取得",
+                        "記録された強度", Modifier.weight(1f),
+                    )
+                    MetricCard(
+                        "高強度", todayDaily?.vigorousIntensityMinutes?.let { "$it 分" } ?: "未取得",
+                        "記録された強度", Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+        item { SectionHeader("食事・栄養", "日次の記録だけを表示します。食事の時刻と回数は未連携です") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
@@ -575,29 +535,22 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                     Modifier.weight(1f),
                     Icons.Default.Restaurant,
                 )
-                MetricCard(
-                    "食事回数",
-                    NutritionDetailPolicy.recordedMealCount(todayMeals.map { it.isDailyRecord to it.mealType })?.let { "$it 回" }
-                        ?: "未取得",
-                    "区分付き記録のみ・全食数は未確認",
-                    Modifier.weight(1f),
-                )
+                val mealCount = NutritionDetailPolicy.recordedMealCount(todayMeals.map { it.isDailyRecord to it.mealType })
+                if (mealCount != null) {
+                    MetricCard("食事回数", "$mealCount 回", "区分付き記録のみ", Modifier.weight(1f))
+                }
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "推定収支",
-                    todayBalance?.let { it.balanceRangeLabel() }
-                        ?: todayDaily?.estimatedEnergyBalanceKcal?.let { signed(it) + " kcal" }
-                        ?: "未取得",
-                    if (todayBalance != null) {
-                        "モデル・デバイス比較レンジ"
-                    } else {
-                        "バンド値のみ・参考"
-                    },
-                    Modifier.weight(1f),
-                )
+                if (todayDaily?.nutritionComplete == true && todayBalance != null) {
+                    MetricCard(
+                        "活動モデル別の推定収支",
+                        todayBalance.balanceRangeLabel(),
+                        "摂取・基礎代謝が揃う日だけ・信頼区間ではありません",
+                        Modifier.weight(1f),
+                    )
+                }
                 MetricCard(
                     "たんぱく質",
                     todayDaily?.proteinGrams.grams(),
@@ -636,7 +589,6 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         }
         item {
             todayDaily?.let { day ->
-                Text("心拍の記録範囲: ${day.heartRateCoverageMinutes?.let { "$it 分" } ?: "未確認"}。運動外サンプル: ${day.heartRateOutsideExerciseSamples ?: "未確認"}。日別平均は安静時心拍ではありません。", style = MaterialTheme.typography.bodySmall)
                 if (day.nutritionRecordStatus == "daily_record_unverified") Text(if (day.nutritionComplete) "食事は日次記録形式です。全食記録済みと確認されていますが、食事回数・内訳は不明です。" else "食事は日次記録形式です。食事回数と全食記録の有無は未確認です。", style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -656,12 +608,9 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                     ).joinToString("〜").ifBlank { "起床日に記録" },
                     Modifier.weight(1f),
                 )
-                MetricCard(
-                    "睡眠中心拍",
-                    todayDaily?.sleepHeartRateAverageBpm?.let { "$it bpm" } ?: "未取得",
-                    if (todayDaily?.sleepMinutes != null && todayDaily.sleepHeartRateAverageBpm == null) "睡眠区間内の心拍未提供" else "主睡眠区間の平均",
-                    Modifier.weight(1f),
-                )
+                todayDaily?.sleepHeartRateAverageBpm?.let { bpm ->
+                    MetricCard("睡眠中心拍", "$bpm bpm", "主睡眠区間の観測値", Modifier.weight(1f))
+                }
             }
         }
         if (todayDaily?.heartRateAverageBpm != null || showHeartRate) item {
@@ -674,12 +623,18 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                     Modifier.fillMaxWidth().padding(15.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text("本日の心拍", style = MaterialTheme.typography.labelLarge)
+                    Text(if (todayDaily?.heartRateOutsideExerciseSamples == 0) "運動中の心拍" else "記録された心拍",
+                        style = MaterialTheme.typography.labelLarge)
                     Text(
                         todayDaily?.heartRateAverageBpm?.let { "平均 $it bpm" } ?: "未取得",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                     )
+                    if (todayDaily?.heartRateOutsideExerciseSamples == 0) {
+                        Text("運動外の心拍が届いていません。安静時心拍として比較しません。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Text(
                         listOfNotNull(
                             todayDaily?.heartRateMinimumBpm?.let { "最小 $it" },
@@ -751,7 +706,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             session.assistedActiveCaloriesKcal?.let {
-                                Text("活動補助推定 ${it.roundToLong()} kcal（運動中心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分）",
+                                Text("独立推定 ${it.roundToLong()} kcal（心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分）",
                                     style = MaterialTheme.typography.bodySmall)
                             }
                             session.workoutHeartAverageBpm?.let {
@@ -1183,7 +1138,7 @@ private fun TrendsScreen(state: MainUiState) {
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     session.assistedActiveCaloriesKcal?.let {
-                                        Text("補助推定 ${it.roundToLong()} kcal／心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分",
+                                        Text("独立推定 ${it.roundToLong()} kcal／心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分",
                                             style = MaterialTheme.typography.bodySmall)
                                     }
                                     session.workoutHeartAverageBpm?.let {
