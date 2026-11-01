@@ -32,7 +32,7 @@ object WorkoutHeartAnalytics {
             else Association(null, "unclassified")
     }
 
-    fun recovery(workout: Workout, samples: List<Heart>): Recovery {
+    fun recovery(workout: Workout, samples: List<Heart>, allWorkouts: List<Workout> = listOf(workout)): Recovery {
         val within = samples.filter { it.timeMs in workout.startMs until workout.endMs && it.bpm in 40..220 }
         val duration = ((workout.endMs - workout.startMs) / 60_000.0).coerceAtLeast(0.0)
         val coverage = within.map { it.timeMs / 60_000 }.distinct().size
@@ -46,8 +46,12 @@ object WorkoutHeartAnalytics {
         }
         val endBpm = medianInWindow(workout.endMs - 60_000, workout.endMs)
         // HRR1 / HRR2 use windows around +1min / +2min, NOT all-day aggregates.
-        val after1 = medianInWindow(workout.endMs + 45_000, workout.endMs + 75_000)
-        val after2 = medianInWindow(workout.endMs + 105_000, workout.endMs + 135_000)
+        // Follow-on activities invalidate post-exercise recovery readings:
+        // samples from the next workout are not measurements of recovery.
+        val after1 = if (recoveryWindowClear(workout, allWorkouts, 75_000L))
+            medianInWindow(workout.endMs + 45_000, workout.endMs + 75_000) else null
+        val after2 = if (recoveryWindowClear(workout, allWorkouts, 135_000L))
+            medianInWindow(workout.endMs + 105_000, workout.endMs + 135_000) else null
         // Require coverage of at least half the workout before comparing recovery.
         val validWorkout = duration >= 3.0 && coverage >= duration * 0.5
         return Recovery(
@@ -60,6 +64,12 @@ object WorkoutHeartAnalytics {
                 (endBpm - after2).roundToInt() else null,
         )
     }
+
+    fun recoveryWindowClear(workout: Workout, allWorkouts: List<Workout>, horizonMs: Long): Boolean =
+        allWorkouts.none { other ->
+            other.id != workout.id && other.startMs < workout.endMs + horizonMs &&
+                other.endMs > workout.endMs
+        }
 
     data class ComparableWorkout(
         val exerciseType: Int,
@@ -85,6 +95,7 @@ object WorkoutHeartAnalytics {
         val recentStart = rangeEndExclusiveMs - 7L * 86_400_000L
         val valid = workouts.filter {
             it.startMs in periodStart until rangeEndExclusiveMs &&
+                it.exerciseType != 0 && // Other Workout: unknown activities must not be compared.
                 it.averageHeartBpm != null && it.durationMinutes >= 5 &&
                 it.sampleCoverageMinutes >= it.durationMinutes * .5
         }
