@@ -99,8 +99,16 @@ fun ChatScreen(
                     Column(Modifier.fillMaxWidth().padding(top = 36.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                         Icon(Icons.Default.AutoAwesome, null, Modifier.size(32.dp), tint = MaterialTheme.colorScheme.primary)
                         Text("今日はどんな相談をしますか？", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                        Text("体の変化、食事、運動、睡眠について一緒に確認しましょう。", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        listOf("最近の体重の傾向を教えて", "摂取カロリーとPFCを確認したい", "今日の運動と睡眠を振り返りたい").forEach { prompt ->
+                        Text("記録のある項目だけで分析します。未取得のデータはゼロとして扱いません。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val hasNutrition = state.daily.any { it.intakeCaloriesKcal != null }
+                        listOf(
+                            "最近の体重と脂肪量の傾向を教えて",
+                            if (hasNutrition) "摂取カロリーとPFCを確認したい"
+                                else "食事データが取得できない原因を確認したい",
+                            "今日の運動と睡眠を振り返りたい",
+                        ).forEach { prompt ->
                             Surface(onClick = { input = prompt }, shape = RoundedCornerShape(16.dp),
                                 color = MaterialTheme.colorScheme.surfaceContainer,
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth()) {

@@ -116,6 +116,7 @@ import com.master.healthcoach.data.db.estimatedEnergyBalanceKcal
 import com.master.healthcoach.data.health.HealthConnectAvailability
 import com.master.healthcoach.domain.EnergyBalanceWeightAnalyzer
 import com.master.healthcoach.domain.EnergyModel
+import com.master.healthcoach.domain.ActivityEnergyDisplayPolicy
 import com.master.healthcoach.domain.EnergyRange
 import com.master.healthcoach.domain.HealthDataExporter
 import com.master.healthcoach.domain.PfcBalance
@@ -187,7 +188,10 @@ fun HealthCoachRoot(
                     Column {
                         Text(if (selectedTab == AppTab.CHAT) "健康コーチ" else "Health Coach", fontWeight = FontWeight.SemiBold)
                         Text(
-                            if (selectedTab == AppTab.CHAT) "体の変化を一緒に確認" else "${selectedTab.label} · v${BuildConfig.VERSION_NAME}",
+                            if (selectedTab == AppTab.CHAT) "体の変化を一緒に確認" else if (state.isSyncing) "${selectedTab.label} · 同期中" else
+                                state.daily.maxOfOrNull { it.updatedAtEpochMillis }?.let {
+                                    "${selectedTab.label} · データ反映 ${formatInstant(it)}"
+                                } ?: "${selectedTab.label} · 未同期",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -380,7 +384,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
         item {
             SectionHeader(
                 "今日の記録",
-                "Health Connectの当日値を、平均や前週比へまとめず表示",
+                "当日値は同期時点までの途中経過です",
             )
         }
         item {
@@ -480,7 +484,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
             }
         }
         item { SectionHeader("活動", if (todayDaily?.metricOriginsJson?.contains("xiaomi_only_v1") == true)
-            "Mi Fitnessのみ・未連携の項目は未取得" else "取得元の限定を反映するには同期してください") }
+            "Xiaomi由来の記録・今日の途中経過" else "取得元の限定を反映するには同期してください") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
@@ -500,72 +504,31 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "中強度",
-                    todayDaily?.moderateIntensityMinutes?.let { "$it 分" } ?: "未取得",
-                    "Health Connect記録",
-                    Modifier.weight(1f),
-                )
-                MetricCard(
-                    "高強度",
-                    todayDaily?.vigorousIntensityMinutes?.let { "$it 分" } ?: "未取得",
-                    "Health Connect記録",
-                    Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "活動消費",
-                    todayDaily?.activeCaloriesKcal?.roundToLong()?.let { "$it kcal" }
-                        ?: "未取得",
-                    "デバイス推定・参考",
-                    Modifier.weight(1f),
-                )
-                MetricCard(
-                    "基礎代謝",
-                    todayDaily?.basalCaloriesKcal.kcal(),
-                    "Mi Fitnessの元記録・kcal/日",
-                    Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "参考活動消費",
-                    todayActive?.range?.let { it.activeRangeLabel() } ?: "未取得",
-                    "独立補助推定（運動中心拍が十分なら補正）とデバイスの比較",
-                    Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "活動補助推定",
-                    todayDaily?.assistedActiveCaloriesKcal?.roundToLong()?.let { "$it kcal" } ?: "未算出",
-                    "歩数重複除外＋運動種別/MET＋運動中心拍",
-                    Modifier.weight(1f),
-                )
-                MetricCard(
-                    "心拍補正適用",
-                    todayDaily?.assistedHeartAdjustedMinutes?.let { "$it 分" } ?: "未取得",
-                    "運動中の心拍観測が十分な区間のみ",
-                    Modifier.weight(1f),
-                )
-            }
-        }
-        item {
-            Text(
-                EnergyModel.INTERPRETATION + " " + com.master.healthcoach.domain.ActivityEnergyAssist.INTERPRETATION,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            ActivityEnergyComparisonCard(
+                independentKcal = todayDaily?.assistedActiveCaloriesKcal,
+                deviceKcal = todayDaily?.activeCaloriesKcal,
+                adjustedHeartMinutes = todayDaily?.assistedHeartAdjustedMinutes,
+                walkingKcal = todayDaily?.assistedWalkingCaloriesKcal,
+                workoutKcal = todayDaily?.assistedExerciseCaloriesKcal,
+                basalKcal = todayDaily?.basalCaloriesKcal,
+                title = "今日の活動消費",
             )
         }
-        item { SectionHeader("食事・栄養", "日次の摂取量・PFCを確認。食事時刻・区分は現在未取得") }
+        if (todayDaily?.moderateIntensityMinutes != null || todayDaily?.vigorousIntensityMinutes != null) {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    MetricCard(
+                        "中強度", todayDaily?.moderateIntensityMinutes?.let { "$it 分" } ?: "未取得",
+                        "記録された強度", Modifier.weight(1f),
+                    )
+                    MetricCard(
+                        "高強度", todayDaily?.vigorousIntensityMinutes?.let { "$it 分" } ?: "未取得",
+                        "記録された強度", Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+        item { SectionHeader("食事・栄養", "日次の記録だけを表示します。食事の時刻と回数は未連携です") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard(
@@ -575,29 +538,22 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                     Modifier.weight(1f),
                     Icons.Default.Restaurant,
                 )
-                MetricCard(
-                    "食事回数",
-                    NutritionDetailPolicy.recordedMealCount(todayMeals.map { it.isDailyRecord to it.mealType })?.let { "$it 回" }
-                        ?: "未取得",
-                    "区分付き記録のみ・全食数は未確認",
-                    Modifier.weight(1f),
-                )
+                val mealCount = NutritionDetailPolicy.recordedMealCount(todayMeals.map { it.isDailyRecord to it.mealType })
+                if (mealCount != null) {
+                    MetricCard("食事回数", "$mealCount 回", "区分付き記録のみ", Modifier.weight(1f))
+                }
             }
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MetricCard(
-                    "推定収支",
-                    todayBalance?.let { it.balanceRangeLabel() }
-                        ?: todayDaily?.estimatedEnergyBalanceKcal?.let { signed(it) + " kcal" }
-                        ?: "未取得",
-                    if (todayBalance != null) {
-                        "モデル・デバイス比較レンジ"
-                    } else {
-                        "バンド値のみ・参考"
-                    },
-                    Modifier.weight(1f),
-                )
+                if (todayDaily?.nutritionComplete == true && todayBalance != null) {
+                    MetricCard(
+                        "活動モデル別の推定収支",
+                        todayBalance.balanceRangeLabel(),
+                        "摂取・基礎代謝が揃う日だけ・信頼区間ではありません",
+                        Modifier.weight(1f),
+                    )
+                }
                 MetricCard(
                     "たんぱく質",
                     todayDaily?.proteinGrams.grams(),
@@ -610,7 +566,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
             }
         }
-        item {
+        if (todayDaily?.intakeCaloriesKcal != null) item {
             Card {
                 DailyPfcSummary(
                     title = "1日のPFC",
@@ -619,24 +575,27 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
             }
         }
-        if (todayMeals.isEmpty()) {
+        val usableTodayMeals = todayMeals.filter { meal ->
+            meal.intakeCaloriesKcal != null || meal.proteinGrams != null ||
+                meal.totalFatGrams != null || meal.carbohydrateGrams != null
+        }
+        if (usableTodayMeals.isEmpty()) {
             item {
                 EmptyCard(
-                    "今日の栄養記録はありません",
+                    "今日の栄養記録は未取得",
                     "あすけんから連携された日次の摂取カロリー・PFCを表示します。食事時刻・区分・回数は未取得です",
                 )
             }
         } else {
             item {
-                MealPfcChartCard(todayMeals)
+                MealPfcChartCard(usableTodayMeals)
             }
-            items(todayMeals, key = { it.recordId }) { meal ->
+            items(usableTodayMeals, key = { it.recordId }) { meal ->
                 MealPfcRow(meal)
             }
         }
         item {
             todayDaily?.let { day ->
-                Text("心拍の記録範囲: ${day.heartRateCoverageMinutes?.let { "$it 分" } ?: "未確認"}。運動外サンプル: ${day.heartRateOutsideExerciseSamples ?: "未確認"}。日別平均は安静時心拍ではありません。", style = MaterialTheme.typography.bodySmall)
                 if (day.nutritionRecordStatus == "daily_record_unverified") Text(if (day.nutritionComplete) "食事は日次記録形式です。全食記録済みと確認されていますが、食事回数・内訳は不明です。" else "食事は日次記録形式です。食事回数と全食記録の有無は未確認です。", style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -656,12 +615,9 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                     ).joinToString("〜").ifBlank { "起床日に記録" },
                     Modifier.weight(1f),
                 )
-                MetricCard(
-                    "睡眠中心拍",
-                    todayDaily?.sleepHeartRateAverageBpm?.let { "$it bpm" } ?: "未取得",
-                    if (todayDaily?.sleepMinutes != null && todayDaily.sleepHeartRateAverageBpm == null) "睡眠区間内の心拍未提供" else "主睡眠区間の平均",
-                    Modifier.weight(1f),
-                )
+                todayDaily?.sleepHeartRateAverageBpm?.let { bpm ->
+                    MetricCard("睡眠中心拍", "$bpm bpm", "主睡眠区間の観測値", Modifier.weight(1f))
+                }
             }
         }
         if (todayDaily?.heartRateAverageBpm != null || showHeartRate) item {
@@ -674,12 +630,18 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                     Modifier.fillMaxWidth().padding(15.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text("本日の心拍", style = MaterialTheme.typography.labelLarge)
+                    Text(if (todayDaily?.heartRateOutsideExerciseSamples == 0) "運動中の心拍" else "記録された心拍",
+                        style = MaterialTheme.typography.labelLarge)
                     Text(
                         todayDaily?.heartRateAverageBpm?.let { "平均 $it bpm" } ?: "未取得",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                     )
+                    if (todayDaily?.heartRateOutsideExerciseSamples == 0) {
+                        Text("運動外の心拍が届いていません。安静時心拍として比較しません。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Text(
                         listOfNotNull(
                             todayDaily?.heartRateMinimumBpm?.let { "最小 $it" },
@@ -751,7 +713,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             session.assistedActiveCaloriesKcal?.let {
-                                Text("活動補助推定 ${it.roundToLong()} kcal（運動中心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分）",
+                                Text("独立推定 ${it.roundToLong()} kcal（心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分）",
                                     style = MaterialTheme.typography.bodySmall)
                             }
                             session.workoutHeartAverageBpm?.let {
@@ -804,6 +766,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
 @Composable
 private fun TrendsScreen(state: MainUiState) {
     var rangeDays by rememberSaveable { mutableStateOf(28) }
+    var showOptionalTrends by rememberSaveable { mutableStateOf(false) }
     val today = LocalDate.now()
     val oldest = (state.daily.map { LocalDate.parse(it.date) } +
         state.body.map { LocalDate.parse(it.date) }).minOrNull()
@@ -824,7 +787,7 @@ private fun TrendsScreen(state: MainUiState) {
         ) {
             SectionHeader(
                 "期間別トレンド",
-                "点は実測、太線は7日中央値。左右スワイプ・タップで確認",
+                "体組成は7日中央値、活動消費は2つの推定値を比較。左右スワイプで期間を移動",
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(7 to "7日", 28 to "28日", 90 to "90日").forEach { (days, label) ->
@@ -915,6 +878,11 @@ private fun TrendsScreen(state: MainUiState) {
                                 )
                             }
                         }
+                    }
+                }
+                item {
+                    TextButton(onClick = { showOptionalTrends = !showOptionalTrends }) {
+                        Text(if (showOptionalTrends) "詳細指標を閉じる" else "詳細指標も表示")
                     }
                 }
                 item {
@@ -1022,7 +990,10 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (showOptionalTrends && dates.any { day ->
+                    val item = dailyByDate[day.toString()]
+                    item?.moderateIntensityMinutes != null || item?.vigorousIntensityMinutes != null
+                }) item {
                     TrendCard(
                         title = "中強度換算の活動",
                         unit = "分",
@@ -1076,7 +1047,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (showOptionalTrends && dates.any { dailyByDate[it.toString()]?.sleepHeartRateAverageBpm != null }) item {
                     TrendCard(
                         title = "睡眠中心拍",
                         unit = "bpm",
@@ -1087,7 +1058,7 @@ private fun TrendsScreen(state: MainUiState) {
                                 value = item?.sleepHeartRateAverageBpm?.toDouble(),
                                 details = listOfNotNull(
                                     item?.heartRateAverageBpm?.let {
-                                        "終日平均 $it bpm（参考）"
+                                        "その日の観測平均 $it bpm（運動中心拍の場合あり）"
                                     },
                                 ),
                             )
@@ -1101,26 +1072,9 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item { SectionHeader("参考値", "消費・摂取カロリーは減量ペースの根拠にしません") }
-                item {
-                    TrendCard(
-                        "活動消費",
-                        "kcal",
-                        dates.map { date ->
-                            TrendPoint(date, dailyByDate[date.toString()]?.activeCaloriesKcal)
-                        },
-                    )
-                }
-                item {
-                    TrendCard(
-                        "活動補助推定",
-                        "kcal",
-                        dates.map { date ->
-                            TrendPoint(date, dailyByDate[date.toString()]?.assistedActiveCaloriesKcal)
-                        },
-                    )
-                }
-                item {
+                item { SectionHeader("活動消費と食事", "活動の2つの推定値は平均せず比較します。消費は摂取目標の根拠ではありません") }
+                item { ActivityEnergyTrendCard(dates, dailyByDate) }
+                if (showOptionalTrends && dates.any { dailyByDate[it.toString()]?.basalCaloriesKcal != null }) item {
                     TrendCard(
                         "基礎代謝",
                         "kcal/日",
@@ -1129,7 +1083,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (dates.any { dailyByDate[it.toString()]?.intakeCaloriesKcal != null }) item {
                     TrendCard(
                         "摂取カロリー",
                         "kcal",
@@ -1138,7 +1092,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (dates.any { dailyByDate[it.toString()]?.proteinGrams != null }) item {
                     TrendCard(
                         "たんぱく質",
                         "g",
@@ -1147,7 +1101,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (showOptionalTrends && dates.any { dailyByDate[it.toString()]?.mealCount?.let { count -> count > 0 } == true }) item {
                     TrendCard(
                         "食事回数",
                         "回",
@@ -1161,7 +1115,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (dates.any { dailyByDate[it.toString()]?.intakeCaloriesKcal != null }) item {
                     DailyPfcCompositionCard(dates, dailyByDate)
                 }
                 item { SectionHeader("期間内の運動", "Health Connectの運動セッション") }
@@ -1183,7 +1137,7 @@ private fun TrendsScreen(state: MainUiState) {
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     session.assistedActiveCaloriesKcal?.let {
-                                        Text("補助推定 ${it.roundToLong()} kcal／心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分",
+                                        Text("独立推定 ${it.roundToLong()} kcal／心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分",
                                             style = MaterialTheme.typography.bodySmall)
                                     }
                                     session.workoutHeartAverageBpm?.let {
@@ -1224,6 +1178,7 @@ private fun WeeklyScreen(
     onExportWeeklyData: (Uri) -> Unit = {},
 ) {
     val report = state.weekly
+    var showWeeklyDetails by rememberSaveable { mutableStateOf(false) }
     val weeklyExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
@@ -1240,7 +1195,7 @@ private fun WeeklyScreen(
         item {
             SectionHeader(
                 "週次ボディメイクレビュー",
-                "カロリー収支と体重推移を対照し、脂肪減少と筋力維持の行動を確認",
+                "まず体組成の変化と生活習慣を確認。根拠が不足する指標は判定しません",
             )
         }
         if (report == null) {
@@ -1298,6 +1253,11 @@ private fun WeeklyScreen(
                 }
             }
 
+            item {
+                TextButton(onClick = { showWeeklyDetails = !showWeeklyDetails }) {
+                    Text(if (showWeeklyDetails) "詳細の指標を閉じる" else "測定の詳細も見る")
+                }
+            }
             item {
                 Card {
                     Column(
@@ -1370,7 +1330,8 @@ private fun WeeklyScreen(
                 }
             }
 
-            item {
+            if ((report.nutritionCompleteDays ?: 0) > 0 && report.basalCaloriesMeasurementDays > 0 &&
+                report.referenceEnergyBalanceValidDays > 0) item {
                 val balanceAnalysis = EnergyBalanceWeightAnalyzer.analyze(report)
                 Card(
                     colors = CardDefaults.cardColors(
@@ -1499,7 +1460,7 @@ private fun WeeklyScreen(
                 }
             }
 
-            item {
+            if (showWeeklyDetails) item {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     val stepsDiff = compareDiff(report.stepsDailyAverage, report.previousWeekStepsDailyAverage)
                     ReportTile(
@@ -1623,7 +1584,7 @@ private fun WeeklyScreen(
                 }
             }
 
-            item {
+            if (showWeeklyDetails) item {
                 Card {
                     Column(
                         Modifier.padding(16.dp),
@@ -1660,7 +1621,11 @@ private fun WeeklyScreen(
                 }
             }
 
-            item {
+            if (report.nutritionMeasurementDays == 0) {
+                item {
+                    EmptyCard("今週の食事分析は保留", "摂取カロリー・PFCの有効な記録がありません。欠測を0として収支は計算しません。")
+                }
+            } else item {
                 Card {
                     Column(
                         Modifier.padding(16.dp),
@@ -1757,50 +1722,41 @@ private fun WeeklyScreen(
             }
 
             item {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-                ) {
-                    Column(
-                        Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp),
-                    ) {
-                        Text("参考値の内訳", fontWeight = FontWeight.SemiBold)
-                        val activeText = if (report.referenceActiveRangeLowKcal != null && report.referenceActiveRangeHighKcal != null) {
-                            EnergyRange(report.referenceActiveRangeLowKcal, report.referenceActiveRangeHighKcal).activeRangeLabel() + "/日（モデル・デバイス比較レンジ）"
-                        } else {
-                            report.activeCaloriesDailyAverage.kcal("/日")
+                ActivityEnergyComparisonCard(
+                    independentKcal = report.assistedActiveCaloriesDailyAverage,
+                    deviceKcal = report.activeCaloriesDailyAverage,
+                    basalKcal = report.basalCaloriesDailyAverage,
+                    title = "今週の活動消費（1日平均）",
+                    suffix = "/日",
+                )
+            }
+            if (showWeeklyDetails) {
+                item {
+                    Card {
+                        Column(Modifier.fillMaxWidth().padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("運動心拍の詳細", style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold)
+                            Text("心拍観測 ${report.assistedHeartObservedMinutes}分・活動推定への補正 ${report.assistedHeartAdjustedMinutes}分")
+                            report.workoutRecovery1MinAverageBpm?.let {
+                                Text("運動後1分の心拍低下：${it.roundToLong()} bpm（${report.workoutRecovery1MinMeasurementSessions}件・参考）")
+                            }
+                            report.workoutComparisons28d.forEach {
+                                Text("種目コード${it.exerciseType}：近7日と先21日の平均心拍差 ${signed(it.differenceBpm)} bpm（種目・時間のみ近似）",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            report.assistedZoneMinutesJson.heartZonesLabel()?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall)
+                            }
+                            Text("運動後回復や平均心拍だけで体力・疾患を判断しません。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(
-                            listOfNotNull(
-                                report.basalCaloriesDailyAverage?.let { "基礎代謝 ${it.kcal("/日")}" },
-                                "活動消費 $activeText",
-                                report.assistedActiveCaloriesDailyAverage?.let {
-                                    "独立補助推定 ${it.kcal("/日")}（${report.assistedActiveValidDays}日）"
-                                },
-                                "運動中心拍観測 ${report.assistedHeartObservedMinutes}分・MET補正適用 ${report.assistedHeartAdjustedMinutes}分",
-                                report.workoutRecovery1MinAverageBpm?.let {
-                                    "運動後1分の平均心拍低下 ${it.roundToLong()} bpm（${report.workoutRecovery1MinMeasurementSessions}セッション、参考）"
-                                },
-                                report.workoutComparisons28d.takeIf { it.isNotEmpty() }?.joinToString("／") {
-                                    "種目コード${it.exerciseType}の28日比較 ${if (it.differenceBpm >= 0) "+" else ""}${it.differenceBpm.roundToLong()} bpm（近7日${it.recentCount}件・先21日${it.referenceCount}件、時間のみ近似）"
-                                },
-                                report.assistedZoneMinutesJson.heartZonesLabel(),
-                            ).joinToString("・"),
-                        )
-                        Text(
-                            "上の「カロリー収支と体重の対照」で摂取との差を見ます。" +
-                                "Xiaomiは歩数のない活動も推定します。独立補助推定は運動と重なる歩数を除外し、運動種別/METと十分な運動中心拍を使います。" +
-                                    "未記録活動を過小に見積もる可能性があり、両者の差を過大評価の証明や真値の信頼区間とは扱いません。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
                 }
             }
 
-            if (report.adaptiveTdeeLowKcal != null && report.adaptiveTdeeHighKcal != null) {
+            if (showWeeklyDetails && report.adaptiveTdeeLowKcal != null && report.adaptiveTdeeHighKcal != null) {
                 item {
                     Card(
                         colors = CardDefaults.cardColors(
@@ -1865,8 +1821,8 @@ private fun WeeklyScreen(
         state.weeklyAdvice?.let { advice ->
             item {
                 SectionHeader(
-                    "専門コーチ分析",
-                    "カロリー収支の比較と体重推移を軸に、低脂質・PFCも確認",
+                    "AIコーチの週次分析",
+                    "連携された記録とデータ不足を踏まえて提案を表示",
                 )
             }
             item {
@@ -1934,6 +1890,9 @@ private fun SettingsScreen(
     var apiKey by rememberSaveable { mutableStateOf("") }
     var model by rememberSaveable(state.modelId) { mutableStateOf(state.modelId) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var showChatGptSettings by rememberSaveable { mutableStateOf(false) }
+    var showSourceDetails by rememberSaveable { mutableStateOf(false) }
+    var showConversationMemory by rememberSaveable { mutableStateOf(false) }
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
     ) { uri ->
@@ -1946,7 +1905,6 @@ private fun SettingsScreen(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp, 10.dp, 16.dp, 34.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        TunnelSettingsCard()
         SectionHeader("プロフィールと目標", "会話で伝えた年齢・身長・性別も反映されます。違う場合はここで修正できます")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SmallField(age, { age = it }, "年齢", Modifier.weight(1f), KeyboardType.Number)
@@ -2021,6 +1979,13 @@ private fun SettingsScreen(
         ) { Text("目標を保存") }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        SectionHeader("ChatGPTとの連携", "必要なときだけトンネルを起動し、共有範囲を選べます")
+        TextButton(onClick = { showChatGptSettings = !showChatGptSettings }) {
+            Text(if (showChatGptSettings) "ChatGPT連携の詳細を閉じる" else "ChatGPT連携・診断ログの設定を開く")
+        }
+        if (showChatGptSettings) TunnelSettingsCard()
+
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
         SectionHeader("Gemini API", "キーはAndroid Keystoreで暗号化し、この端末だけに保存します")
         OutlinedTextField(
             value = apiKey,
@@ -2043,9 +2008,19 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        UnavailableMetricsNotice()
-        SectionHeader("実機データ診断", "Mi Fitness、eufy、あすけんが実際に書いた項目と、栄養の書込粒度を確認します")
-        state.sources.forEach { source ->
+        SectionHeader("Health Connect", "連携状態とデータの不足を確認")
+        Text(
+            "取得できる項目 ${state.sources.count { it.status == "取得可能" || it.status == "計算可能" }}件・" +
+                "未取得/権限不足 ${state.sources.count { it.status != "取得可能" && it.status != "計算可能" }}件",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        TextButton(onClick = { showSourceDetails = !showSourceDetails }) {
+            Text(if (showSourceDetails) "元データの一覧を閉じる" else "元データの取得状況を見る")
+        }
+        if (showSourceDetails) {
+            UnavailableMetricsNotice()
+            SectionHeader("取得元の詳細", "Mi Fitness、eufy、あすけんの実際の提供状況")
+            state.sources.forEach { source ->
             Card {
                 Row(
                     Modifier.fillMaxWidth().padding(14.dp),
@@ -2077,7 +2052,8 @@ private fun SettingsScreen(
                 }
             }
         }
-        if (state.sources.isEmpty()) Text("同期後に診断結果が表示されます。")
+            if (state.sources.isEmpty()) Text("同期後に診断結果が表示されます。")
+        }
         if (!state.grantedPermissions.containsAll(state.requiredPermissions)) {
             Button(onClick = onRequestPermissions, modifier = Modifier.fillMaxWidth()) {
                 Text("総消費・睡眠・心拍などの権限を許可")
@@ -2088,11 +2064,11 @@ private fun SettingsScreen(
         }
 
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        SectionHeader(
-            "会話メモリー",
-            "チャット画面は直近20件を表示し、28日分の履歴を保持します。古い会話は習慣・制約の要約としてここに残ります",
-        )
-        Card(
+        SectionHeader("会話メモリー", "AIが参照する習慣・制約の要約")
+        TextButton(onClick = { showConversationMemory = !showConversationMemory }) {
+            Text(if (showConversationMemory) "会話メモリーを閉じる" else "保存された会話メモリーを見る")
+        }
+        if (showConversationMemory) Card(
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant,
             ),
@@ -2204,19 +2180,26 @@ private fun hideEmptyMetric(title: String, value: String): Boolean {
 @Composable
 private fun UnavailableMetricsNotice() {
     val limited = LocalMetricAvailability.current.filter { it.hideEmptyMetric }
-    if (limited.isEmpty()) {
-        if (LocalMetricAvailability.current.any { it.state == com.master.healthcoach.domain.MetricAvailabilityState.CHECKING }) {
-            Text("取得可否を確認中：30日分の同期後に、連携されていない項目を整理します。", style = MaterialTheme.typography.bodySmall)
-        }
-        return
-    }
+    if (limited.isEmpty()) return
+    var expanded by rememberSaveable { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("現在の連携で使えない項目", fontWeight = FontWeight.SemiBold)
-            limited.groupBy { it.reason }.forEach { (reason, items) ->
-                Text(items.joinToString("・") { it.label } + "：" + reason, style = MaterialTheme.typography.bodySmall)
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("未連携の記録 ${limited.size}項目", style = MaterialTheme.typography.labelMedium)
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "閉じる" else "確認する")
+                }
             }
-            Text("値が届けば通常表示に戻ります。詳しくは設定の実機データ診断を確認してください。", style = MaterialTheme.typography.labelSmall)
+            if (expanded) {
+                limited.groupBy { it.reason }.forEach { (reason, items) ->
+                    Text(items.joinToString("・") { it.label } + "：" + reason,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Text("取得できない値は0として扱いません。設定のHealth Connectから取得元を確認できます。",
+                    style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
 }
@@ -2226,6 +2209,94 @@ private fun SectionHeader(title: String, subtitle: String) {
     Column {
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
         Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun ActivityEnergyComparisonCard(
+    independentKcal: Double?,
+    deviceKcal: Double?,
+    adjustedHeartMinutes: Int? = null,
+    walkingKcal: Double? = null,
+    workoutKcal: Double? = null,
+    basalKcal: Double? = null,
+    title: String,
+    suffix: String = "",
+) {
+    val display = ActivityEnergyDisplayPolicy.compare(independentKcal, deviceKcal)
+    var expanded by rememberSaveable(title) { mutableStateOf(false) }
+    val maximum = maxOf(display.independentKcal ?: 0.0, display.deviceKcal ?: 0.0, 1.0)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                display.primaryKcal?.let { "${it.roundToLong()} kcal$suffix" } ?: "未取得",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                when (display.source) {
+                    ActivityEnergyDisplayPolicy.Source.INDEPENDENT -> "独立推定を主表示（歩数の重複除外＋運動種別・時間）"
+                    ActivityEnergyDisplayPolicy.Source.XIAOMI -> "Xiaomi推定のみ・独立推定は未算出"
+                    ActivityEnergyDisplayPolicy.Source.MISSING -> "推定可能な記録がありません。同期状態を確認してください"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            if (display.hasComparison) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("独立推定", style = MaterialTheme.typography.labelMedium)
+                    Text("${display.independentKcal!!.roundToLong()} kcal$suffix", style = MaterialTheme.typography.labelMedium)
+                }
+                LinearProgressIndicator(
+                    progress = { (display.independentKcal!! / maximum).toFloat().coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Xiaomi推定", style = MaterialTheme.typography.labelMedium)
+                    Text("${display.deviceKcal!!.roundToLong()} kcal$suffix", style = MaterialTheme.typography.labelMedium)
+                }
+                LinearProgressIndicator(
+                    progress = { (display.deviceKcal!! / maximum).toFloat().coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+                Text(
+                    "差：Xiaomi − 独立推定 ${signed(display.differenceKcal!!)} kcal$suffix",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Text(
+                    "2つの推定方法の比較です。大小の幅は信頼区間ではなく、平均値も正解とはみなしません。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            } else if (display.source == ActivityEnergyDisplayPolicy.Source.XIAOMI) {
+                Text("独立推定には歩数・体重・身長などの記録が必要です。",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            if (display.source != ActivityEnergyDisplayPolicy.Source.MISSING) {
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "計算方法を閉じる" else "内訳・計算方法を見る")
+                }
+                if (expanded) {
+                    walkingKcal?.let { Text("歩行分（独立推定） ${it.roundToLong()} kcal") }
+                    workoutKcal?.let { Text("運動分（独立推定） ${it.roundToLong()} kcal") }
+                    adjustedHeartMinutes?.let { Text("運動中心拍を用いた補正 ${it}分") }
+                    basalKcal?.let { Text("基礎代謝（別項目） ${it.roundToLong()} kcal/日") }
+                    Text(
+                        "独立推定は運動と重なる歩数を除外し、種別・時間からMETで活動消費を計算します。" +
+                            "十分な運動中心拍がある場合のみ限定的に補正します。" +
+                            "未記録活動や負荷を完全には反映しません。Xiaomiは別方式の推定です。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -2255,6 +2326,65 @@ private data class TrendPoint(
     val value: Double?,
     val details: List<String> = emptyList(),
 )
+
+@Composable
+private fun ActivityEnergyTrendCard(
+    dates: List<LocalDate>,
+    dailyByDate: Map<String, DailyHealthSummaryEntity>,
+) {
+    val independent = dates.map { date ->
+        TrendPoint(date, ActivityEnergyDisplayPolicy.compare(
+            dailyByDate[date.toString()]?.assistedActiveCaloriesKcal,
+            dailyByDate[date.toString()]?.activeCaloriesKcal,
+        ).independentKcal)
+    }
+    val device = dates.map { date ->
+        TrendPoint(date, ActivityEnergyDisplayPolicy.compare(
+            dailyByDate[date.toString()]?.assistedActiveCaloriesKcal,
+            dailyByDate[date.toString()]?.activeCaloriesKcal,
+        ).deviceKcal)
+    }
+    var selectedIndex by remember(dates) { mutableStateOf<Int?>(null) }
+    val currentIndex = selectedIndex ?: dates.indices.lastOrNull()
+    val selected = currentIndex?.let { dates.getOrNull(it) }
+    val display = selected?.let { day ->
+        ActivityEnergyDisplayPolicy.compare(
+            dailyByDate[day.toString()]?.assistedActiveCaloriesKcal,
+            dailyByDate[day.toString()]?.activeCaloriesKcal,
+        )
+    }
+    Card {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("活動消費の比較", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("太線：独立推定", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary)
+                Text("細線：Xiaomi", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (independent.count { it.value != null } + device.count { it.value != null } >= 2) {
+                InteractiveSparkline(
+                    points = device,
+                    overlayPoints = if (independent.any { it.value != null }) independent else device,
+                    selectedIndex = selectedIndex,
+                    onSelect = { selectedIndex = it },
+                    modifier = Modifier.fillMaxWidth().height(112.dp),
+                )
+            } else {
+                Text("比較に必要な活動記録がありません。同期後に確認してください。",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            if (display != null && selected != null) {
+                Text(selected.format(TREND_DETAIL_DATE_FORMAT) + " ／ 独立推定 " +
+                    (display.independentKcal?.let { it.roundToLong().toString() + " kcal" } ?: "未算出") +
+                    "・Xiaomi " + (display.deviceKcal?.let { it.roundToLong().toString() + " kcal" } ?: "未取得"),
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            Text("欠測は線をつなぎません。2系列の間隔は推定誤差や信頼区間ではありません。",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
 
 @Composable
 private fun TrendCard(
