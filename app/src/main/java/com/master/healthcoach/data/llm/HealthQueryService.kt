@@ -244,6 +244,10 @@ class HealthQueryService(
                         put("category", session.category)
                         put("durationMinutes", session.durationMinutes)
                         number("assistedActiveCaloriesKcal", session.assistedActiveCaloriesKcal)
+                        number("workoutHeartAverageBpm", session.workoutHeartAverageBpm)
+                        session.workoutHeartCoverageMinutes?.let { put("workoutHeartCoverageMinutes", it) }
+                        session.recoveryDrop1MinBpm?.let { put("recoveryDrop1MinBpm", it) }
+                        session.recoveryDrop2MinBpm?.let { put("recoveryDrop2MinBpm", it) }
                         session.assistedHeartObservedMinutes?.let { put("assistedHeartObservedMinutes", it) }
                         session.assistedHeartAdjustedMinutes?.let { put("assistedHeartAdjustedMinutes", it) }
                         session.assistedZoneMinutesJson?.let { put("assistedZoneMinutesJson", it) }
