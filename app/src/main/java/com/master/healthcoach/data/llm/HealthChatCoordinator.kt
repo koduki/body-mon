@@ -328,7 +328,7 @@ internal fun WeeklySnapshot.existingAiContract(): JsonObject = buildJsonObject {
     put("assistedHeartAdjustedMinutes", assistedHeartAdjustedMinutes)
     workoutRecovery1MinAverageBpm?.let { put("workoutRecovery1MinAverageBpm", it) }
     put("workoutRecovery1MinMeasurementSessions", workoutRecovery1MinMeasurementSessions)
-    put("workoutComparisons28d", kotlinx.serialization.json.Json.encodeToJsonElement(workoutComparisons28d))
+    put("workoutComparisons28d", kotlinx.serialization.json.Json.Default.encodeToJsonElement(workoutComparisons28d))
     assistedZoneMinutesJson?.let { put("assistedZoneMinutesJson", it) }
     put("assistedModelVersion", com.master.healthcoach.domain.ActivityEnergyAssist.VERSION)
     put("exerciseSessions", exerciseSessions)
