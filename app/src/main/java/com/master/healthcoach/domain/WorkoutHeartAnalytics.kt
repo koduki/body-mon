@@ -16,7 +16,7 @@ object WorkoutHeartAnalytics {
         val heartAverageBpm: Double?,
         val workoutSampleCount: Int,
         val coverageMinutes: Int,
-        /** Difference in bpm between last 30s of exercise and about 1 minute after. */
+        /** Difference in bpm between last 60s of exercise and about 1 minute after. */
         val drop1MinBpm: Int?,
         val drop2MinBpm: Int?,
     )
@@ -44,7 +44,7 @@ object WorkoutHeartAnalytics {
             // Avoid drawing recovery conclusions from a single sensor spike.
             return if (values.size >= 2) TrendMath.median(values) else null
         }
-        val endBpm = medianInWindow(workout.endMs - 30_000, workout.endMs)
+        val endBpm = medianInWindow(workout.endMs - 60_000, workout.endMs)
         // HRR1 / HRR2 use windows around +1min / +2min, NOT all-day aggregates.
         val after1 = medianInWindow(workout.endMs + 45_000, workout.endMs + 75_000)
         val after2 = medianInWindow(workout.endMs + 105_000, workout.endMs + 135_000)
