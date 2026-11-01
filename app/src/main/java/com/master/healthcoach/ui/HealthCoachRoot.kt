@@ -759,6 +759,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
 @Composable
 private fun TrendsScreen(state: MainUiState) {
     var rangeDays by rememberSaveable { mutableStateOf(28) }
+    var showOptionalTrends by rememberSaveable { mutableStateOf(false) }
     val today = LocalDate.now()
     val oldest = (state.daily.map { LocalDate.parse(it.date) } +
         state.body.map { LocalDate.parse(it.date) }).minOrNull()
@@ -779,7 +780,7 @@ private fun TrendsScreen(state: MainUiState) {
         ) {
             SectionHeader(
                 "期間別トレンド",
-                "点は実測、太線は7日中央値。左右スワイプ・タップで確認",
+                "体組成は7日中央値、活動消費は2つの推定値を比較。左右スワイプで期間を移動",
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(7 to "7日", 28 to "28日", 90 to "90日").forEach { (days, label) ->
@@ -870,6 +871,11 @@ private fun TrendsScreen(state: MainUiState) {
                                 )
                             }
                         }
+                    }
+                }
+                item {
+                    TextButton(onClick = { showOptionalTrends = !showOptionalTrends }) {
+                        Text(if (showOptionalTrends) "詳細指標を閉じる" else "詳細指標も表示")
                     }
                 }
                 item {
@@ -977,7 +983,10 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (showOptionalTrends && dates.any { day ->
+                    val item = dailyByDate[day.toString()]
+                    item?.moderateIntensityMinutes != null || item?.vigorousIntensityMinutes != null
+                }) item {
                     TrendCard(
                         title = "中強度換算の活動",
                         unit = "分",
@@ -1031,7 +1040,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (showOptionalTrends && dates.any { dailyByDate[it.toString()]?.sleepHeartRateAverageBpm != null }) item {
                     TrendCard(
                         title = "睡眠中心拍",
                         unit = "bpm",
@@ -1042,7 +1051,7 @@ private fun TrendsScreen(state: MainUiState) {
                                 value = item?.sleepHeartRateAverageBpm?.toDouble(),
                                 details = listOfNotNull(
                                     item?.heartRateAverageBpm?.let {
-                                        "終日平均 $it bpm（参考）"
+                                        "その日の観測平均 $it bpm（運動中心拍の場合あり）"
                                     },
                                 ),
                             )
@@ -1056,26 +1065,9 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item { SectionHeader("参考値", "消費・摂取カロリーは減量ペースの根拠にしません") }
-                item {
-                    TrendCard(
-                        "活動消費",
-                        "kcal",
-                        dates.map { date ->
-                            TrendPoint(date, dailyByDate[date.toString()]?.activeCaloriesKcal)
-                        },
-                    )
-                }
-                item {
-                    TrendCard(
-                        "活動補助推定",
-                        "kcal",
-                        dates.map { date ->
-                            TrendPoint(date, dailyByDate[date.toString()]?.assistedActiveCaloriesKcal)
-                        },
-                    )
-                }
-                item {
+                item { SectionHeader("活動消費と食事", "活動の2つの推定値は平均せず比較します。消費は摂取目標の根拠ではありません") }
+                item { ActivityEnergyTrendCard(dates, dailyByDate) }
+                if (showOptionalTrends && dates.any { dailyByDate[it.toString()]?.basalCaloriesKcal != null }) item {
                     TrendCard(
                         "基礎代謝",
                         "kcal/日",
@@ -1084,7 +1076,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (dates.any { dailyByDate[it.toString()]?.intakeCaloriesKcal != null }) item {
                     TrendCard(
                         "摂取カロリー",
                         "kcal",
@@ -1093,7 +1085,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (dates.any { dailyByDate[it.toString()]?.proteinGrams != null }) item {
                     TrendCard(
                         "たんぱく質",
                         "g",
@@ -1102,7 +1094,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (showOptionalTrends && dates.any { dailyByDate[it.toString()]?.mealCount?.let { count -> count > 0 } == true }) item {
                     TrendCard(
                         "食事回数",
                         "回",
@@ -1116,7 +1108,7 @@ private fun TrendsScreen(state: MainUiState) {
                         },
                     )
                 }
-                item {
+                if (dates.any { dailyByDate[it.toString()]?.intakeCaloriesKcal != null }) item {
                     DailyPfcCompositionCard(dates, dailyByDate)
                 }
                 item { SectionHeader("期間内の運動", "Health Connectの運動セッション") }
@@ -2298,6 +2290,65 @@ private data class TrendPoint(
     val value: Double?,
     val details: List<String> = emptyList(),
 )
+
+@Composable
+private fun ActivityEnergyTrendCard(
+    dates: List<LocalDate>,
+    dailyByDate: Map<String, DailyHealthSummaryEntity>,
+) {
+    val independent = dates.map { date ->
+        TrendPoint(date, ActivityEnergyDisplayPolicy.compare(
+            dailyByDate[date.toString()]?.assistedActiveCaloriesKcal,
+            dailyByDate[date.toString()]?.activeCaloriesKcal,
+        ).independentKcal)
+    }
+    val device = dates.map { date ->
+        TrendPoint(date, ActivityEnergyDisplayPolicy.compare(
+            dailyByDate[date.toString()]?.assistedActiveCaloriesKcal,
+            dailyByDate[date.toString()]?.activeCaloriesKcal,
+        ).deviceKcal)
+    }
+    var selectedIndex by remember(dates) { mutableStateOf<Int?>(null) }
+    val currentIndex = selectedIndex ?: dates.indices.lastOrNull()
+    val selected = currentIndex?.let { dates.getOrNull(it) }
+    val display = selected?.let { day ->
+        ActivityEnergyDisplayPolicy.compare(
+            dailyByDate[day.toString()]?.assistedActiveCaloriesKcal,
+            dailyByDate[day.toString()]?.activeCaloriesKcal,
+        )
+    }
+    Card {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("活動消費の比較", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("太線：独立推定", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary)
+                Text("細線：Xiaomi", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (independent.count { it.value != null } + device.count { it.value != null } >= 2) {
+                InteractiveSparkline(
+                    points = device,
+                    overlayPoints = if (independent.any { it.value != null }) independent else device,
+                    selectedIndex = selectedIndex,
+                    onSelect = { selectedIndex = it },
+                    modifier = Modifier.fillMaxWidth().height(112.dp),
+                )
+            } else {
+                Text("比較に必要な活動記録がありません。同期後に確認してください。",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            if (display != null && selected != null) {
+                Text(selected.format(TREND_DETAIL_DATE_FORMAT) + " ／ 独立推定 " +
+                    (display.independentKcal?.let { it.roundToLong().toString() + " kcal" } ?: "未算出") +
+                    "・Xiaomi " + (display.deviceKcal?.let { it.roundToLong().toString() + " kcal" } ?: "未取得"),
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            Text("欠測は線をつなぎません。2系列の間隔は推定誤差や信頼区間ではありません。",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
 
 @Composable
 private fun TrendCard(
