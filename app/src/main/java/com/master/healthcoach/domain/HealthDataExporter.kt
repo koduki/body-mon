@@ -82,7 +82,7 @@ data class ExportedConversationMemory(
 
 @Serializable
 data class WeeklyAiExportPayload(
-    val schemaVersion: Int = 2,
+    val schemaVersion: Int = 3,
     val exportType: String = "weekly_ai_analysis",
     val appVersionName: String = BuildConfig.VERSION_NAME,
     val appVersionCode: Int = BuildConfig.VERSION_CODE,
@@ -134,7 +134,8 @@ data class WeeklyAiAnalysisContext(
             "心拍ゾーンや運動強度の実測値がない場合はトレーニング負荷を断定しない。" +
             "筋力維持そのものは朝トレ日数では証明せず、月1回のパーソナルでの重量・回数で確認する。",
     val energyAndExpenditureRules: String =
-        EnergyModel.INTERPRETATION + " modelVersion=${EnergyModel.VERSION}",
+        EnergyModel.INTERPRETATION + " legacyModelVersion=${EnergyModel.VERSION}; " +
+            ActivityEnergyAssist.INTERPRETATION + " assistedModelVersion=${ActivityEnergyAssist.VERSION}",
     val sleepAndRecoveryRules: String =
         "睡眠6時間（360分）は本人の最低運用目標であり、回復十分の判定ではない（達成日はセッション枠で数える）。" +
             "sleepMinutesは睡眠ステージ合計（sleep_stages / sleep_stages_partial）、ステージ欠測時は" +
@@ -182,6 +183,10 @@ data class WeeklyActivityQualityExport(
     val basalCaloriesMeasurementDays: Int,
     val activityIntensityMeasurementDays: Int,
     val largeActiveDiscrepancyDays: Int,
+    val assistedEnergyMeasurementDays: Int = 0,
+    val assistedHeartAdjustedDays: Int = 0,
+    val assistedMethodVersion: String = ActivityEnergyAssist.VERSION,
+    val assistedEnergyNote: String = ActivityEnergyAssist.INTERPRETATION,
     val usableForStepTrend: Boolean,
     val usableForActivityIntensity: Boolean,
     val wearableSourcePolicy: String = "xiaomi_only_v1",
@@ -316,6 +321,12 @@ data class WeeklyDailyRecordExport(
     val heartRateInterpretation: String? = null,
     val basalCaloriesKcal: Double? = null,
     val activeCaloriesDeviceKcal: Double? = null,
+    val assistedActiveCaloriesKcal: Double? = null,
+    val assistedWalkingCaloriesKcal: Double? = null,
+    val assistedExerciseCaloriesKcal: Double? = null,
+    val assistedHeartObservedMinutes: Int? = null,
+    val assistedHeartAdjustedMinutes: Int? = null,
+    val assistedZoneMinutesJson: String? = null,
     val referenceStepModelActiveKcal: Double? = null,
     val referenceEvaluatedActiveKcal: Double? = null,
     val referenceActiveRangeLowKcal: Double? = null,
@@ -350,6 +361,10 @@ data class WeeklyExerciseSessionExport(
     val durationMinutes: Long,
     val minutesInRequestedPeriod: Long,
     val dataOrigin: String,
+    val assistedActiveCaloriesKcal: Double? = null,
+    val assistedHeartObservedMinutes: Int? = null,
+    val assistedHeartAdjustedMinutes: Int? = null,
+    val assistedZoneMinutesJson: String? = null,
 )
 
 @Serializable
@@ -785,6 +800,12 @@ object HealthDataExporter {
             heartRateInterpretation = heartRateInterpretation,
             basalCaloriesKcal = dayItem?.basalCaloriesKcal,
             activeCaloriesDeviceKcal = dayItem?.activeCaloriesKcal,
+            assistedActiveCaloriesKcal = dayItem?.assistedActiveCaloriesKcal,
+            assistedWalkingCaloriesKcal = dayItem?.assistedWalkingCaloriesKcal,
+            assistedExerciseCaloriesKcal = dayItem?.assistedExerciseCaloriesKcal,
+            assistedHeartObservedMinutes = dayItem?.assistedHeartObservedMinutes,
+            assistedHeartAdjustedMinutes = dayItem?.assistedHeartAdjustedMinutes,
+            assistedZoneMinutesJson = dayItem?.assistedZoneMinutesJson,
             referenceStepModelActiveKcal = activeEstimate?.let {
                 EnergyModel.roundForDisplay(it.stepModelKcal)
             },
@@ -859,6 +880,10 @@ object HealthDataExporter {
                     durationMinutes = session.durationMinutes,
                     minutesInRequestedPeriod = clippedMinutes,
                     dataOrigin = session.dataOrigin,
+                    assistedActiveCaloriesKcal = session.assistedActiveCaloriesKcal,
+                    assistedHeartObservedMinutes = session.assistedHeartObservedMinutes,
+                    assistedHeartAdjustedMinutes = session.assistedHeartAdjustedMinutes,
+                    assistedZoneMinutesJson = session.assistedZoneMinutesJson,
                 )
             }
     }
@@ -1112,6 +1137,8 @@ object HealthDataExporter {
                 basalCaloriesMeasurementDays = basalCalDays,
                 activityIntensityMeasurementDays = intensityDays,
                 largeActiveDiscrepancyDays = largeDiscrepancyDays,
+                assistedEnergyMeasurementDays = weekDaily.count { it.assistedActiveCaloriesKcal != null },
+                assistedHeartAdjustedDays = weekDaily.count { (it.assistedHeartAdjustedMinutes ?: 0) > 0 },
                 usableForStepTrend = stepsDays >= 5,
                 usableForActivityIntensity = intensityDays > 0,
                 wearableSourcePolicy = wearablePolicy,
@@ -1130,7 +1157,7 @@ object HealthDataExporter {
                 unverifiedOtherSessions = unverifiedOtherSessions,
                 unverifiedOtherMinutes = unverifiedOtherMinutes,
                 strengthAssessmentStatus = strengthStatus,
-                heartRateIntensityAvailable = false,
+                heartRateIntensityAvailable = weekDaily.any { (it.assistedHeartAdjustedMinutes ?: 0) > 0 },
                 statusNote = exerciseStatusNote,
             ),
             heartRate = WeeklyHeartRateQualityExport(
