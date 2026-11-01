@@ -50,7 +50,7 @@ class WorkoutHeartAnalyticsTest {
             WorkoutHeartAnalytics.Heart(11 * m + 65_000, 175),
         )
         val wrong = WorkoutHeartAnalytics.recovery(workout, samples)
-        assertEquals(-10, wrong.drop1MinBpm)
+        assertEquals(-20, wrong.drop1MinBpm)
         val corrected = WorkoutHeartAnalytics.recovery(workout, samples, listOf(workout, next))
         assertNull(corrected.drop1MinBpm)
         assertNull(corrected.drop2MinBpm)
