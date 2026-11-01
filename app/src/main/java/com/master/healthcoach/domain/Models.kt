@@ -23,6 +23,8 @@ data class WeeklySnapshot(
     val assistedActiveValidDays: Int = 0,
     val assistedHeartObservedMinutes: Int = 0,
     val assistedHeartAdjustedMinutes: Int = 0,
+    /** Observed, not interpolated, Z1..Z5 minutes, encoded as JSON array. */
+    val assistedZoneMinutesJson: String? = null,
     val exerciseSessions: Int = 0,
     val exerciseMinutes: Long = 0,
     val strengthMinutes: Long = 0,
