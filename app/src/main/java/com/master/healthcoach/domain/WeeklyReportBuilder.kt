@@ -232,6 +232,10 @@ object WeeklyReportBuilder {
             activeCaloriesDailyAverage = averageDouble(
                 currentDaily.mapNotNull { it.activeCaloriesKcal },
             ),
+            assistedActiveCaloriesDailyAverage = activeSummary?.assistedDailyAverageKcal,
+            assistedActiveValidDays = activeSummary?.assistedValidDays ?: 0,
+            assistedHeartObservedMinutes = currentDaily.sumOf { it.assistedHeartObservedMinutes ?: 0 },
+            assistedHeartAdjustedMinutes = currentDaily.sumOf { it.assistedHeartAdjustedMinutes ?: 0 },
             exerciseSessions = currentDaily.sumOf { it.exerciseSessionCount },
             exerciseMinutes = currentDaily.sumOf { it.exerciseMinutes },
             strengthMinutes = totalStrengthMinutes,
