@@ -6,9 +6,12 @@ import com.master.healthcoach.BuildConfig
 import com.master.healthcoach.data.HealthRepository
 import com.master.healthcoach.data.db.*
 import com.master.healthcoach.data.diagnostics.DiagnosticsStore
+import com.master.healthcoach.data.diagnostics.FlightEventRecord
+import com.master.healthcoach.data.diagnostics.W3cTraceContext
 import com.master.healthcoach.data.llm.*
 import com.master.healthcoach.domain.WeeklyReportBuilder
 import com.master.healthcoach.domain.WorkoutHeartAnalytics
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.json.*
 import java.security.MessageDigest
 import java.time.LocalDate
@@ -18,22 +21,47 @@ import java.time.temporal.ChronoUnit
 import java.util.Base64
 
 class HealthMcpBackend(
-    private val db: HealthCoachDatabase,
+    private val db: HealthCoachDatabase?,
     private val repository: HealthRepository,
     private val diagnostics: DiagnosticsStore,
     private val permissions: () -> SharePermissions,
     private val sessionExpiresAt: () -> Long,
+    daoOverride: HealthCoachDao? = null,
+    private val transactionRunner: (suspend (suspend () -> JsonObject) -> JsonObject)? = null,
 ) {
-    private val dao = db.dao()
+    private val daoOrNull: HealthCoachDao? = daoOverride ?: runCatching { db?.dao() }.getOrNull()
+    private val dao: HealthCoachDao get() = daoOrNull ?: throw McpFailure("DB_UNAVAILABLE")
     private val json = Json { encodeDefaults = true; explicitNulls = true }
     private val queries = HealthQueryService(repository)
     fun tools(): JsonArray = McpTools.available(permissions())
+
+    private suspend fun inTransaction(block: suspend () -> JsonObject): JsonObject {
+        val runner = transactionRunner
+        if (runner != null) return runner(block)
+        val database = db
+        if (database != null) {
+            return try {
+                database.withTransaction { block() }
+            } catch (e: McpFailure) {
+                throw e
+            } catch (e: Exception) {
+                // Allow Room-independent diagnostics tools to succeed even if SQLite/Room cannot open
+                block()
+            }
+        }
+        return block()
+    }
+
     suspend fun call(name: String, args: JsonObject): JsonElement {
+        val callStartMs = System.currentTimeMillis()
+        val incomingTrace = currentCoroutineContext()[McpTraceContextElement]?.traceContext
+        val mcpSpanId = W3cTraceContext.generateSpanId()
         McpTools.check(name, args, permissions())
         // Permission queries touch Health Connect and should not hold a Room transaction.
         val granted = if (name == "get_app_diagnostics") runCatching { repository.grantedPermissions().sorted() }.getOrDefault(emptyList()) else emptyList()
-        val result = db.withTransaction {
-            val revision = dao.metadata("revision").orEmpty()
+        val result = try {
+            inTransaction {
+            val revision = runCatching { daoOrNull?.metadata("revision") }.getOrNull().orEmpty()
             val today = LocalDate.now()
             val to = date(args, "to", if (name == "get_workout_hr_comparison") today.minusDays(1) else today)
             val from = date(args, "from", if (name == "get_heart_rate_series") to else to.minusDays(27))
@@ -41,12 +69,17 @@ class HealthMcpBackend(
             val zone = ZoneId.systemDefault()
             val start = from.atStartOfDay(zone).toInstant().toEpochMilli()
             val end = to.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
-            val limit = number(args, "limit", 50, 1, if (name == "get_heart_rate_series") 500 else 100)
+            val limit = number(args, "limit", 50, 1, if (name == "get_heart_rate_series") 500 else if (name == "get_sync_diagnostics") 50 else 100)
             val fingerprint = digest(name + JsonObject(args.filterKeys { it != "cursor" }.toSortedMap()).toString())
             val cursor = decodeCursor(args.string("cursor"), revision, fingerprint)
             var next: String? = null
             var effectiveFrom = from.toString()
             var effectiveTo = to.toString()
+            val latestSyncRun = diagnostics.flightRecorder.syncRuns(limit = 1).firstOrNull()
+            val activeTraceId = incomingTrace?.traceId
+                ?: latestSyncRun?.traceId
+                ?: runCatching { daoOrNull?.metadata("lastSyncTraceId") }.getOrNull()?.takeIf { W3cTraceContext.isValidTraceId(it) }
+                ?: W3cTraceContext.generateTraceId()
             val data: JsonElement = when (name) {
                 "get_app_context" -> buildJsonObject {
                     put("appVersion", BuildConfig.VERSION_NAME); put("commitSha", BuildConfig.COMMIT_SHA)
@@ -219,10 +252,47 @@ val allWindows = rows.map {
                     put("appVersion", BuildConfig.VERSION_NAME); put("commitSha", BuildConfig.COMMIT_SHA); put("sdkInt", Build.VERSION.SDK_INT)
                     put("databaseVersion", 12); put("policyVersion", ConversationContextPolicy.VERSION)
                     put("grantedPermissions", json.encodeToJsonElement(granted)); put("captureEnabled", diagnostics.enabled); put("detailedCapture", diagnostics.detailed)
-                    val events = dao.events(start, end, "", 0, 10001)
+                    put("otlpExportEnabled", diagnostics.otlpSettings.enabled)
+                    val events = runCatching { daoOrNull?.events(start, end, "", 0, 10001) }.getOrNull().orEmpty()
                     put("eventCount", events.size); put("sampleLimited", events.size > 10000)
                     put("counts", buildJsonObject { events.groupingBy { it.category + ":" + it.outcome }.eachCount().forEach { (k,v) -> put(k,v) } })
+                    put("lastSyncTraceId", (latestSyncRun?.traceId ?: runCatching { daoOrNull?.metadata("lastSyncTraceId") }.getOrNull())?.let(::JsonPrimitive) ?: JsonNull)
+                    put("lastSyncLastStage", (latestSyncRun?.lastSuccessfulStage ?: runCatching { daoOrNull?.metadata("lastSyncLastStage") }.getOrNull()?.takeIf { it.isNotEmpty() })?.let(::JsonPrimitive) ?: JsonNull)
+                    put("lastSyncFailedStage", (latestSyncRun?.failedStage ?: runCatching { daoOrNull?.metadata("lastSyncFailedStage") }.getOrNull()?.takeIf { it.isNotEmpty() })?.let(::JsonPrimitive) ?: JsonNull)
+                    put("lastSyncErrorKind", (latestSyncRun?.errorKind ?: runCatching { daoOrNull?.metadata("lastSyncErrorKind") }.getOrNull()?.takeIf { it.isNotEmpty() })?.let(::JsonPrimitive) ?: JsonNull)
+                    put("flightRecorderRunCount", diagnostics.flightRecorder.syncRuns(limit = 60).size)
+                    put("recentProcessExits", json.encodeToJsonElement(diagnostics.flightRecorder.processExits(limit = 10)))
                     put("retentionDays", 14); put("historicalEventsBeforeFeatureUnavailable", true)
+                }
+                "get_sync_diagnostics" -> {
+                    val filter = args.string("traceId").ifBlank { args.string("runId") }
+                    val pageSize = number(args, "limit", 20, 1, 50)
+                    val offset = if (cursor.isBlank()) 0 else cursor.toIntOrNull()?.takeIf { it >= 0 } ?: throw McpFailure("INVALID_CURSOR")
+                    val allRuns = diagnostics.flightRecorder.syncRuns(traceIdFilter = filter, limit = 60)
+                    val pageRuns = allRuns.drop(offset).take(pageSize + 1)
+                    if (pageRuns.size > pageSize) {
+                        next = (offset + pageSize).toString()
+                    }
+                    val checkpoint = diagnostics.flightRecorder.readCheckpoint()
+                    buildJsonObject {
+                        put("latestRunSummary", buildJsonObject {
+                            put("runId", latestSyncRun?.runId?.let(::JsonPrimitive) ?: JsonNull)
+                            put("traceId", (latestSyncRun?.traceId ?: runCatching { daoOrNull?.metadata("lastSyncTraceId") }.getOrNull())?.let(::JsonPrimitive) ?: JsonNull)
+                            put("trigger", latestSyncRun?.trigger?.let(::JsonPrimitive) ?: JsonNull)
+                            put("outcome", (latestSyncRun?.outcome ?: runCatching { daoOrNull?.metadata("lastSyncOutcome") }.getOrNull())?.let(::JsonPrimitive) ?: JsonNull)
+                            put("lastSuccessfulStage", (latestSyncRun?.lastSuccessfulStage ?: runCatching { daoOrNull?.metadata("lastSyncLastStage") }.getOrNull()?.takeIf { it.isNotEmpty() })?.let(::JsonPrimitive) ?: JsonNull)
+                            put("failedStage", (latestSyncRun?.failedStage ?: runCatching { daoOrNull?.metadata("lastSyncFailedStage") }.getOrNull()?.takeIf { it.isNotEmpty() })?.let(::JsonPrimitive) ?: JsonNull)
+                            put("errorKind", (latestSyncRun?.errorKind ?: runCatching { daoOrNull?.metadata("lastSyncErrorKind") }.getOrNull()?.takeIf { it.isNotEmpty() })?.let(::JsonPrimitive) ?: JsonNull)
+                            put("startedAtEpochMillis", latestSyncRun?.startedAtEpochMillis?.let(::JsonPrimitive) ?: JsonNull)
+                            put("endedAtEpochMillis", latestSyncRun?.endedAtEpochMillis?.let(::JsonPrimitive) ?: JsonNull)
+                            put("durationMs", latestSyncRun?.durationMs?.let(::JsonPrimitive) ?: JsonNull)
+                        })
+                        put("activeStageCheckpoint", checkpoint?.let { json.encodeToJsonElement(it) } ?: JsonNull)
+                        put("runs", json.encodeToJsonElement(pageRuns.take(pageSize)))
+                        put("recentProcessExits", json.encodeToJsonElement(diagnostics.flightRecorder.processExits(limit = 10)))
+                        put("otlpExportEnabled", diagnostics.otlpSettings.enabled)
+                        put("privacyGuarantee", "Stage timings, record counts, and allowlisted error kinds only. No health values, chat messages, or prompts.")
+                    }
                 }
                 "list_app_events" -> {
                     val category = args.string("category")
@@ -260,19 +330,65 @@ val allWindows = rows.map {
                 effectiveFrom = snapshot?.string("weekStart").orEmpty()
                 effectiveTo = snapshot?.string("weekEnd").orEmpty()
             }
+            val lastSyncSuccess = runCatching { daoOrNull?.metadata("lastSyncSuccess")?.toLongOrNull() }.getOrNull()
+                ?: latestSyncRun?.takeIf { it.outcome == "success" }?.endedAtEpochMillis
+            val lastSyncOutcome = runCatching { daoOrNull?.metadata("lastSyncOutcome") }.getOrNull()
+                ?: latestSyncRun?.outcome
+            val lastSyncTraceId = runCatching { daoOrNull?.metadata("lastSyncTraceId") }.getOrNull()?.takeIf { it.isNotEmpty() }
+                ?: latestSyncRun?.traceId
             buildJsonObject {
                 put("schemaVersion", 1); put("generatedAt", Instant.now().toString()); put("timeZone", zone.id)
                 put("dataRevision", revision); put("snapshotId", revision + ":" + fingerprint)
+                put("traceId", activeTraceId)
+                put("traceparent", W3cTraceContext.formatTraceparent(activeTraceId, mcpSpanId))
                 put("requestedPeriod", if (periodFiltered) buildJsonObject { put("from", from.toString()); put("to", to.toString()) } else JsonNull)
                 put("effectivePeriod", if (periodFiltered || name == "get_weekly_report") buildJsonObject { put("from", effectiveFrom); put("to", effectiveTo) } else JsonNull)
-                put("lastSyncSuccessEpochMillis", dao.metadata("lastSyncSuccess")?.toLongOrNull()?.let(::JsonPrimitive) ?: JsonNull)
-                put("lastSyncOutcome", dao.metadata("lastSyncOutcome")?.let(::JsonPrimitive) ?: JsonNull)
+                put("lastSyncSuccessEpochMillis", lastSyncSuccess?.let(::JsonPrimitive) ?: JsonNull)
+                put("lastSyncOutcome", lastSyncOutcome?.let(::JsonPrimitive) ?: JsonNull)
+                put("lastSyncTraceId", lastSyncTraceId?.let(::JsonPrimitive) ?: JsonNull)
                 put("todayIsPartial", true); put("data", data)
                 put("nextCursor", next?.let { JsonPrimitive(encodeCursor(revision, fingerprint, it)) } ?: JsonNull)
                 put("warnings", buildJsonArray { add(JsonPrimitive("Cached data only; null/missing is not zero. Metrics describe effectivePeriod; follow nextCursor for the remaining requested period.")) })
             }
+            }
+        } catch (e: Throwable) {
+            if (diagnostics.enabled && incomingTrace != null) {
+                val now = System.currentTimeMillis()
+                val errEvent = FlightEventRecord(
+                    timestampEpochMillis = now,
+                    traceId = incomingTrace.traceId,
+                    spanId = mcpSpanId,
+                    parentSpanId = incomingTrace.parentSpanId,
+                    category = "mcp",
+                    outcome = "failure",
+                    durationMs = (now - callStartMs).coerceAtLeast(0),
+                    stringAttributes = mapOf("mcp.tool" to name, "mcp.outcome" to "failure"),
+                    appVersion = BuildConfig.VERSION_NAME,
+                    commitSha = BuildConfig.COMMIT_SHA,
+                )
+                diagnostics.flightRecorder.recordEvent(errEvent)
+                diagnostics.otlpExporter.enqueueEvent(errEvent)
+            }
+            throw e
         }
         McpTools.check(name, args, permissions())
+        if (diagnostics.enabled && incomingTrace != null) {
+            val now = System.currentTimeMillis()
+            val okEvent = FlightEventRecord(
+                timestampEpochMillis = now,
+                traceId = incomingTrace.traceId,
+                spanId = mcpSpanId,
+                parentSpanId = incomingTrace.parentSpanId,
+                category = "mcp",
+                outcome = "success",
+                durationMs = (now - callStartMs).coerceAtLeast(0),
+                stringAttributes = mapOf("mcp.tool" to name, "mcp.outcome" to "success"),
+                appVersion = BuildConfig.VERSION_NAME,
+                commitSha = BuildConfig.COMMIT_SHA,
+            )
+            diagnostics.flightRecorder.recordEvent(okEvent)
+            diagnostics.otlpExporter.enqueueEvent(okEvent)
+        }
         return result
     }
     private suspend fun reconstruct(args: JsonObject, inputs: Boolean): JsonObject {

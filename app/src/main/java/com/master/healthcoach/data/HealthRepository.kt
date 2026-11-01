@@ -3,8 +3,15 @@ package com.master.healthcoach.data
 import androidx.room.withTransaction
 import com.master.healthcoach.BuildConfig
 import com.master.healthcoach.data.db.AppMetadataEntity
+import com.master.healthcoach.data.db.HealthCoachDao
 import com.master.healthcoach.data.db.ReportArchiveEntity
+import com.master.healthcoach.data.diagnostics.ActiveStageCheckpoint
+import com.master.healthcoach.data.diagnostics.DiagnosticErrorClassifier
 import com.master.healthcoach.data.diagnostics.DiagnosticsStore
+import com.master.healthcoach.data.diagnostics.StageSpanRecord
+import com.master.healthcoach.data.diagnostics.SyncRunDiagnostics
+import com.master.healthcoach.data.diagnostics.W3cTraceContext
+import com.master.healthcoach.data.health.SyncStageObserver
 import com.master.healthcoach.data.llm.ConversationContextPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.*
@@ -36,13 +43,30 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+fun interface SyncFaultHook {
+    suspend fun onStage(stage: String)
+}
+
 class HealthRepository(
-    private val database: HealthCoachDatabase,
+    private val database: HealthCoachDatabase?,
     private val gateway: HealthConnectGateway,
     private val json: Json,
     val diagnostics: DiagnosticsStore? = null,
+    daoOverride: HealthCoachDao? = null,
+    private val transactionRunner: (suspend (suspend () -> Unit) -> Unit)? = null,
 ) {
-    private val dao = database.dao()
+    private val dao: HealthCoachDao = daoOverride ?: requireNotNull(database) { "database or daoOverride is required" }.dao()
+
+    private suspend fun <T> inTransaction(block: suspend () -> T): T {
+        val runner = transactionRunner
+        if (runner != null) {
+            var result: T? = null
+            runner { result = block() }
+            @Suppress("UNCHECKED_CAST")
+            return result as T
+        }
+        return requireNotNull(database).withTransaction { block() }
+    }
 
     val daily: Flow<List<DailyHealthSummaryEntity>> = dao.observeDaily()
     val body: Flow<List<BodyCompositionEntity>> = dao.observeBody()
@@ -63,43 +87,255 @@ class HealthRepository(
     suspend fun hasCorePermissions(): Boolean = gateway.hasCorePermissions()
     suspend fun hasBackgroundPermission(): Boolean = gateway.hasBackgroundPermission()
 
-    suspend fun sync(): WeeklyReportEntity {
-        val runId = DiagnosticsStore.id()
-        val started = System.nanoTime()
-        diagnostics?.event("sync", "started", correlation = runId)
-        dao.setMetadata(AppMetadataEntity("lastSyncAttempt", System.currentTimeMillis().toString()))
+    suspend fun sync(
+        trigger: String = "direct",
+        faultHook: SyncFaultHook? = null,
+    ): WeeklyReportEntity {
+        val traceId = DiagnosticsStore.traceId()
+        val rootSpanId = DiagnosticsStore.spanId()
+        val startedAtMs = System.currentTimeMillis()
+        val startedNano = System.nanoTime()
+        val completedStages = mutableListOf<StageSpanRecord>()
+        val summaryCounters = linkedMapOf<String, Long>()
+        var currentStage = "sync.init"
+        var currentStageStartedMs = startedAtMs
+        var lastSuccessfulStage: String? = null
+
+        suspend fun enterStage(stage: String) {
+            currentStage = stage
+            currentStageStartedMs = System.currentTimeMillis()
+            diagnostics?.writeStageCheckpoint(
+                ActiveStageCheckpoint(
+                    traceId = traceId,
+                    rootSpanId = rootSpanId,
+                    trigger = trigger,
+                    activeStage = stage,
+                    lastSuccessfulStage = lastSuccessfulStage,
+                    startedAtEpochMillis = startedAtMs,
+                    stageStartedAtEpochMillis = currentStageStartedMs,
+                    completedStages = completedStages.toList(),
+                    appVersion = BuildConfig.VERSION_NAME,
+                    commitSha = BuildConfig.COMMIT_SHA,
+                ),
+            )
+            faultHook?.onStage(stage)
+        }
+
+        fun completeStage(
+            stage: String,
+            startMs: Long,
+            endMs: Long,
+            attributes: Map<String, Long> = emptyMap(),
+            stringAttributes: Map<String, String> = emptyMap(),
+            booleanAttributes: Map<String, Boolean> = emptyMap(),
+        ) {
+            val safeEnd = endMs.coerceAtLeast(startMs)
+            completedStages += StageSpanRecord(
+                traceId = traceId,
+                spanId = W3cTraceContext.generateSpanId(),
+                parentSpanId = rootSpanId,
+                name = stage,
+                stage = stage,
+                status = "ok",
+                startEpochMillis = startMs,
+                endEpochMillis = safeEnd,
+                durationMs = (safeEnd - startMs).coerceAtLeast(0),
+                attributes = attributes,
+                stringAttributes = stringAttributes,
+                booleanAttributes = booleanAttributes,
+            )
+            lastSuccessfulStage = stage
+        }
+
+        diagnostics?.event("sync", "started", correlation = traceId, stringAttributes = mapOf("sync.trigger" to trigger))
         try {
-            val report = syncInternal()
-            dao.setMetadata(AppMetadataEntity("lastSyncSuccess", System.currentTimeMillis().toString()))
-            dao.setMetadata(AppMetadataEntity("lastSyncOutcome", "success"))
-            diagnostics?.event("sync", "success", (System.nanoTime() - started) / 1_000_000, runId)
+            val report = syncInternal(
+                enterStage = ::enterStage,
+                completeStage = ::completeStage,
+                summaryCounters = summaryCounters,
+            )
+            val endedAtMs = System.currentTimeMillis().coerceAtLeast(startedAtMs)
+            val durationMs = ((System.nanoTime() - startedNano) / 1_000_000).coerceAtLeast(0)
+            diagnostics?.recordSyncRun(
+                run = SyncRunDiagnostics(
+                    runId = traceId,
+                    traceId = traceId,
+                    rootSpanId = rootSpanId,
+                    trigger = trigger,
+                    startedAtEpochMillis = startedAtMs,
+                    endedAtEpochMillis = endedAtMs,
+                    durationMs = durationMs,
+                    outcome = "success",
+                    lastSuccessfulStage = lastSuccessfulStage,
+                    failedStage = null,
+                    counters = summaryCounters.toMap(),
+                    stages = completedStages.toList(),
+                    appVersion = BuildConfig.VERSION_NAME,
+                    commitSha = BuildConfig.COMMIT_SHA,
+                ),
+                faultOnDiagnosticsRecord = if (faultHook != null) {
+                    { faultHook.onStage("diagnostics.record") }
+                } else {
+                    null
+                },
+            )
             return report
-        } catch (e: CancellationException) { throw e
+        } catch (e: CancellationException) {
+            // TimeoutCancellationException is a subtype of CancellationException; record timeout before rethrowing.
+            val errorKind = DiagnosticErrorClassifier.classify(e)
+            if (errorKind == "timeout") {
+                val endedAtMs = System.currentTimeMillis().coerceAtLeast(startedAtMs)
+                val durationMs = ((System.nanoTime() - startedNano) / 1_000_000).coerceAtLeast(0)
+                val frames = DiagnosticErrorClassifier.sanitizeAppFrames(e)
+                val exType = DiagnosticErrorClassifier.sanitizeExceptionType(e)
+                completedStages += StageSpanRecord(
+                    traceId = traceId,
+                    spanId = W3cTraceContext.generateSpanId(),
+                    parentSpanId = rootSpanId,
+                    name = currentStage,
+                    stage = currentStage,
+                    status = "error",
+                    startEpochMillis = currentStageStartedMs,
+                    endEpochMillis = endedAtMs,
+                    durationMs = (endedAtMs - currentStageStartedMs).coerceAtLeast(0),
+                    errorKind = errorKind,
+                    exceptionType = exType,
+                    appFrames = frames,
+                )
+                diagnostics?.recordSyncRun(
+                    SyncRunDiagnostics(
+                        runId = traceId,
+                        traceId = traceId,
+                        rootSpanId = rootSpanId,
+                        trigger = trigger,
+                        startedAtEpochMillis = startedAtMs,
+                        endedAtEpochMillis = endedAtMs,
+                        durationMs = durationMs,
+                        outcome = "failure",
+                        lastSuccessfulStage = lastSuccessfulStage,
+                        failedStage = currentStage,
+                        errorKind = errorKind,
+                        exceptionType = exType,
+                        appFrames = frames,
+                        counters = summaryCounters.toMap(),
+                        stages = completedStages.toList(),
+                        appVersion = BuildConfig.VERSION_NAME,
+                        commitSha = BuildConfig.COMMIT_SHA,
+                    ),
+                )
+            } else {
+                diagnostics?.clearStageCheckpoint()
+            }
+            throw e
         } catch (e: Exception) {
-            dao.setMetadata(AppMetadataEntity("lastSyncOutcome", "failure"))
-            diagnostics?.event("sync", "failure", (System.nanoTime() - started) / 1_000_000, runId, error = e)
+            val endedAtMs = System.currentTimeMillis().coerceAtLeast(startedAtMs)
+            val durationMs = ((System.nanoTime() - startedNano) / 1_000_000).coerceAtLeast(0)
+            val errorKind = DiagnosticErrorClassifier.classify(e)
+            val resolvedFailedStage = if (errorKind == "migration" && currentStage in setOf("sync.init", "room.persist")) {
+                "room.migration"
+            } else {
+                currentStage
+            }
+            val frames = DiagnosticErrorClassifier.sanitizeAppFrames(e)
+            val exType = DiagnosticErrorClassifier.sanitizeExceptionType(e)
+            completedStages += StageSpanRecord(
+                traceId = traceId,
+                spanId = W3cTraceContext.generateSpanId(),
+                parentSpanId = rootSpanId,
+                name = resolvedFailedStage,
+                stage = resolvedFailedStage,
+                status = "error",
+                startEpochMillis = currentStageStartedMs,
+                endEpochMillis = endedAtMs,
+                durationMs = (endedAtMs - currentStageStartedMs).coerceAtLeast(0),
+                errorKind = errorKind,
+                exceptionType = exType,
+                appFrames = frames,
+            )
+            diagnostics?.recordSyncRun(
+                SyncRunDiagnostics(
+                    runId = traceId,
+                    traceId = traceId,
+                    rootSpanId = rootSpanId,
+                    trigger = trigger,
+                    startedAtEpochMillis = startedAtMs,
+                    endedAtEpochMillis = endedAtMs,
+                    durationMs = durationMs,
+                    outcome = "failure",
+                    lastSuccessfulStage = lastSuccessfulStage,
+                    failedStage = resolvedFailedStage,
+                    errorKind = errorKind,
+                    exceptionType = exType,
+                    appFrames = frames,
+                    counters = summaryCounters.toMap(),
+                    stages = completedStages.toList(),
+                    appVersion = BuildConfig.VERSION_NAME,
+                    commitSha = BuildConfig.COMMIT_SHA,
+                ),
+            )
             throw e
         }
     }
 
-    private suspend fun syncInternal(): WeeklyReportEntity {
+    private suspend fun syncInternal(
+        enterStage: suspend (String) -> Unit,
+        completeStage: (String, Long, Long, Map<String, Long>, Map<String, String>, Map<String, Boolean>) -> Unit,
+        summaryCounters: MutableMap<String, Long>,
+    ): WeeklyReportEntity {
         val today = LocalDate.now()
-        val earliestDaily = dao.earliestDailyDate()?.let {
-            runCatching { LocalDate.parse(it) }.getOrNull()
+        // Query Room backfill/goal metadata only after checking whether a migration fault hook is active.
+        val earliestDaily = runCatching {
+            dao.earliestDailyDate()?.let { LocalDate.parse(it) }
+        }.getOrElse { error ->
+            if (DiagnosticErrorClassifier.classify(error) == "migration") {
+                enterStage("room.migration")
+                throw error
+            }
+            null
         }
-        val canBackfillHistory = gateway.hasHistoryPermission()
+        val canBackfillHistory = runCatching { gateway.hasHistoryPermission() }.getOrDefault(false)
         val needsInitialBackfill = canBackfillHistory && (
             earliestDaily == null || earliestDaily > today.minusDays(89) ||
-                dao.needsMetricBackfill(today.minusDays(89).toString())
+                runCatching { dao.needsMetricBackfill(today.minusDays(89).toString()) }.getOrDefault(false)
             )
-        val energyGoal = dao.getGoal()
+        val energyGoal = runCatching { dao.getGoal() }.getOrNull()
+        val syncDays = if (needsInitialBackfill) 90L else 31L
+        summaryCounters["sync.days"] = syncDays
+
+        val stageObserver = object : SyncStageObserver {
+            override suspend fun onStageStarted(stage: String) {
+                enterStage(stage)
+            }
+
+            override suspend fun onStageCompleted(
+                stage: String,
+                startEpochMillis: Long,
+                endEpochMillis: Long,
+                attributes: Map<String, Long>,
+                stringAttributes: Map<String, String>,
+                booleanAttributes: Map<String, Boolean>,
+            ) {
+                completeStage(stage, startEpochMillis, endEpochMillis, attributes, stringAttributes, booleanAttributes)
+            }
+        }
+
         val bundle = gateway.sync(
-            days = if (needsInitialBackfill) 90 else 31,
+            days = syncDays,
             heightCm = energyGoal?.heightCm,
             sex = energyGoal?.sex,
             ageYears = energyGoal?.age,
+            stageObserver = stageObserver,
         )
-        database.withTransaction {
+
+        summaryCounters["days"] = bundle.daily.size.toLong()
+        summaryCounters["body"] = bundle.body.size.toLong()
+        summaryCounters["sessions"] = bundle.exerciseSessions.size.toLong()
+        summaryCounters["heartSamples"] = bundle.heartRateSamples.size.toLong()
+        summaryCounters["meals"] = bundle.nutritionMeals.size.toLong()
+
+        val persistStart = System.currentTimeMillis()
+        enterStage("room.persist")
+        inTransaction {
             val existing = dao.getDaily(
                 bundle.daily.first().date, bundle.daily.last().date,
             ).associateBy { it.date }
@@ -128,11 +364,50 @@ class HealthRepository(
             )
             dao.upsertNutritionMeals(bundle.nutritionMeals)
         }
-        diagnostics?.event("sync", "success", counters = mapOf("days" to bundle.daily.size.toLong(), "body" to bundle.body.size.toLong(), "sessions" to bundle.exerciseSessions.size.toLong(), "heartSamples" to bundle.heartRateSamples.size.toLong(), "meals" to bundle.nutritionMeals.size.toLong()))
-        return rebuildWeekly()
+        val persistEnd = System.currentTimeMillis().coerceAtLeast(persistStart)
+        completeStage(
+            "room.persist",
+            persistStart,
+            persistEnd,
+            mapOf(
+                "db.daily_upserted" to bundle.daily.size.toLong(),
+                "db.body_upserted" to bundle.body.size.toLong(),
+                "db.sources_upserted" to bundle.sources.size.toLong(),
+                "db.sessions_upserted" to bundle.exerciseSessions.size.toLong(),
+                "db.heart_samples_upserted" to bundle.heartRateSamples.size.toLong(),
+                "db.meals_upserted" to bundle.nutritionMeals.size.toLong(),
+            ),
+            emptyMap(),
+            emptyMap(),
+        )
+
+        val rebuildStart = System.currentTimeMillis()
+        enterStage("weekly.rebuild")
+        var archived = false
+        var inputsBytes = 0L
+        val weekly = rebuildWeeklyInternal(today) { isArchived, bytes ->
+            archived = isArchived
+            inputsBytes = bytes.toLong()
+        }
+        val rebuildEnd = System.currentTimeMillis().coerceAtLeast(rebuildStart)
+        completeStage(
+            "weekly.rebuild",
+            rebuildStart,
+            rebuildEnd,
+            mapOf("weekly.inputs_bytes" to inputsBytes),
+            emptyMap(),
+            mapOf("weekly.archived" to archived),
+        )
+        return weekly
     }
 
-    suspend fun rebuildWeekly(today: LocalDate = LocalDate.now()): WeeklyReportEntity = database.withTransaction {
+    suspend fun rebuildWeekly(today: LocalDate = LocalDate.now()): WeeklyReportEntity =
+        rebuildWeeklyInternal(today)
+
+    private suspend fun rebuildWeeklyInternal(
+        today: LocalDate = LocalDate.now(),
+        onArchiveMetrics: ((Boolean, Int) -> Unit)? = null,
+    ): WeeklyReportEntity = inTransaction {
         val from = today.minusDays(89).toString()
         val daily = dao.getDaily(from, today.toString())
         val body = dao.getBody(from, today.toString())
@@ -157,7 +432,9 @@ class HealthRepository(
                 put("daily", json.encodeToJsonElement(daily)); put("body", json.encodeToJsonElement(body))
                 put("goal", json.encodeToJsonElement(dao.getGoal()))
             }.toString()
-            if (inputs.toByteArray().size <= 160_000) {
+            val byteSize = inputs.toByteArray().size
+            val canArchive = byteSize <= 160_000
+            if (canArchive) {
                 dao.archiveReport(ReportArchiveEntity(
                     id = UUID.randomUUID().toString(), periodStart = snapshot.weekStart, periodEnd = snapshot.weekEnd,
                     generatedAt = it.generatedAtEpochMillis, revision = dao.metadata("revision")?.toLongOrNull() ?: 0,
@@ -166,6 +443,7 @@ class HealthRepository(
                 ))
                 dao.pruneReports(System.currentTimeMillis() - 90 * DiagnosticsStore.DAY)
             }
+            onArchiveMetrics?.invoke(canArchive, byteSize)
         }
     }
 
@@ -336,7 +614,7 @@ class HealthRepository(
     }
 
     suspend fun clearAll() {
-        database.withTransaction {
+        inTransaction {
             dao.clearDaily()
             dao.clearBody()
             dao.clearSources()

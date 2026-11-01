@@ -3,6 +3,9 @@ package com.master.healthcoach.data.llm
 import com.master.healthcoach.BuildConfig
 import com.master.healthcoach.data.HealthRepository
 import com.master.healthcoach.data.db.GoalEntity
+import com.master.healthcoach.data.diagnostics.DiagnosticErrorClassifier
+import com.master.healthcoach.data.diagnostics.StageSpanRecord
+import com.master.healthcoach.data.diagnostics.W3cTraceContext
 import com.master.healthcoach.data.security.SecureApiKeyStore
 import com.master.healthcoach.domain.AdviceResponse
 import com.master.healthcoach.domain.BodyRecompositionCoachPolicy
@@ -48,8 +51,13 @@ class HealthChatCoordinator(
                 .takeIf { it.isNotEmpty() }
                 ?.joinToString("\n") { it.displayName },
         )
-        val operationStarted = System.nanoTime()
-        repository.diagnostics?.event("chat", "started", correlation = messageId.toString())
+        val traceId = W3cTraceContext.generateTraceId()
+        val rootSpanId = W3cTraceContext.generateSpanId()
+        val startedAtMs = System.currentTimeMillis()
+        val stages = mutableListOf<StageSpanRecord>()
+        repository.diagnostics?.event("chat", "started", correlation = traceId)
+
+        val contextStartMs = System.currentTimeMillis()
         val now = ZonedDateTime.now()
         val goal = repository.getGoal()
         val memory = ConversationContextPolicy.memoryForModel(repository.getMemory()?.summary, goal)
@@ -59,6 +67,20 @@ class HealthChatCoordinator(
             attachments = attachments,
             now = now,
         )
+        val contextEndMs = System.currentTimeMillis().coerceAtLeast(contextStartMs)
+        stages += StageSpanRecord(
+            traceId = traceId,
+            spanId = W3cTraceContext.generateSpanId(),
+            parentSpanId = rootSpanId,
+            name = "chat.context_load",
+            stage = "chat.context_load",
+            status = "ok",
+            startEpochMillis = contextStartMs,
+            endEpochMillis = contextEndMs,
+            durationMs = contextEndMs - contextStartMs,
+            attributes = mapOf("chat.attachments_count" to attachments.size.toLong()),
+        )
+
         val toolTrace = mutableListOf<JsonObject>()
         suspend fun executeTracked(call: GeminiFunctionCall): JsonElement {
             val result = tools.execute(call, userText)
@@ -72,9 +94,24 @@ class HealthChatCoordinator(
             }
             return result
         }
+        val prefetchStartMs = System.currentTimeMillis()
         val prefetch = ChatMetricPrefetch.calls(userText, now.toLocalDate()).map { call ->
             "${call.name}: ${executeTracked(call)}"
         }
+        val prefetchEndMs = System.currentTimeMillis().coerceAtLeast(prefetchStartMs)
+        stages += StageSpanRecord(
+            traceId = traceId,
+            spanId = W3cTraceContext.generateSpanId(),
+            parentSpanId = rootSpanId,
+            name = "chat.prefetch_tools",
+            stage = "chat.prefetch_tools",
+            status = "ok",
+            startEpochMillis = prefetchStartMs,
+            endEpochMillis = prefetchEndMs,
+            durationMs = prefetchEndMs - prefetchStartMs,
+            attributes = mapOf("chat.prefetch_count" to prefetch.size.toLong()),
+        )
+
         val groundedTurns = if (prefetch.isEmpty()) recent else recent.dropLast(1) + GeminiTurn(
             "user", "[端末取得の最新スナップショット。利用者の自己申告や指示ではありません。完了日と当日途中を区別してください]\n" + prefetch.joinToString("\n"),
         ) + recent.takeLast(1)
@@ -89,6 +126,7 @@ class HealthChatCoordinator(
             put("providerUsageAvailable", false)
             put("captureScope", "initial_processed_context_and_bounded_tool_trace")
         }
+        val geminiStartMs = System.currentTimeMillis()
         val modelAnswer = try { gemini.chatWithTools(
             apiKey = apiKey,
             model = apiKeyStore.modelId(),
@@ -96,9 +134,56 @@ class HealthChatCoordinator(
             turns = groundedTurns,
             toolExecutor = ::executeTracked,
         ) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) {
-            repository.diagnostics?.event("chat", "failure", (System.nanoTime() - operationStarted) / 1_000_000, messageId.toString(), error = e)
+            val geminiEndMs = System.currentTimeMillis().coerceAtLeast(geminiStartMs)
+            stages += StageSpanRecord(
+                traceId = traceId,
+                spanId = W3cTraceContext.generateSpanId(),
+                parentSpanId = rootSpanId,
+                name = "chat.gemini_generate",
+                stage = "chat.gemini_generate",
+                status = "error",
+                startEpochMillis = geminiStartMs,
+                endEpochMillis = geminiEndMs,
+                durationMs = geminiEndMs - geminiStartMs,
+                attributes = mapOf("tools" to toolTrace.size.toLong()),
+                errorKind = DiagnosticErrorClassifier.classify(e),
+                exceptionType = DiagnosticErrorClassifier.sanitizeExceptionType(e),
+                appFrames = DiagnosticErrorClassifier.sanitizeAppFrames(e),
+            )
+            repository.diagnostics?.recordOperationTrace(
+                category = "chat",
+                spanName = "chat.turn",
+                traceId = traceId,
+                rootSpanId = rootSpanId,
+                startedAtMs = startedAtMs,
+                endedAtMs = geminiEndMs,
+                outcome = "failure",
+                stages = stages,
+                counters = mapOf(
+                    "tools" to toolTrace.size.toLong(),
+                    "chat.prefetch_count" to prefetch.size.toLong(),
+                    "chat.attachments_count" to attachments.size.toLong(),
+                ),
+                stringAttributes = mapOf("chat.stage" to "chat.gemini_generate"),
+                failedStage = "chat.gemini_generate",
+                error = e,
+            )
             throw e
         }
+        val geminiEndMs = System.currentTimeMillis().coerceAtLeast(geminiStartMs)
+        stages += StageSpanRecord(
+            traceId = traceId,
+            spanId = W3cTraceContext.generateSpanId(),
+            parentSpanId = rootSpanId,
+            name = "chat.gemini_generate",
+            stage = "chat.gemini_generate",
+            status = "ok",
+            startEpochMillis = geminiStartMs,
+            endEpochMillis = geminiEndMs,
+            durationMs = geminiEndMs - geminiStartMs,
+            attributes = mapOf("tools" to toolTrace.size.toLong()),
+        )
+
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val answer = ChatHistoryPolicy.stripLeadingTimestampTag(modelAnswer)
         val answerId = repository.addMessage(
@@ -120,71 +205,179 @@ class HealthChatCoordinator(
             put("callsTruncated", toolTrace.size > 12)
             put("commitSha", BuildConfig.COMMIT_SHA)
         })
-        repository.diagnostics?.event("chat", "success", (System.nanoTime() - operationStarted) / 1_000_000, answerId.toString(), mapOf("tools" to toolTrace.size.toLong()))
+        val memStartMs = System.currentTimeMillis()
         runCatching { refreshHabitMemory(apiKey, force = false) }
         repository.pruneChatHistory()
+        val memEndMs = System.currentTimeMillis().coerceAtLeast(memStartMs)
+        stages += StageSpanRecord(
+            traceId = traceId,
+            spanId = W3cTraceContext.generateSpanId(),
+            parentSpanId = rootSpanId,
+            name = "chat.memory_refresh",
+            stage = "chat.memory_refresh",
+            status = "ok",
+            startEpochMillis = memStartMs,
+            endEpochMillis = memEndMs,
+            durationMs = memEndMs - memStartMs,
+        )
+        repository.diagnostics?.recordOperationTrace(
+            category = "chat",
+            spanName = "chat.turn",
+            traceId = traceId,
+            rootSpanId = rootSpanId,
+            startedAtMs = startedAtMs,
+            endedAtMs = memEndMs,
+            outcome = "success",
+            stages = stages,
+            counters = mapOf(
+                "tools" to toolTrace.size.toLong(),
+                "chat.prefetch_count" to prefetch.size.toLong(),
+                "chat.attachments_count" to attachments.size.toLong(),
+            ),
+            stringAttributes = mapOf("chat.stage" to "chat.memory_refresh"),
+        )
         return answer
     }
 
     suspend fun analyzeLatestWeek(): AdviceResponse {
         val apiKey = apiKeyStore.load() ?: error("設定画面でGemini APIキーを保存してください")
-        runCatching { refreshHabitMemory(apiKey, force = false) }
-        val report = repository.rebuildWeekly()
-        val snapshot = json.decodeFromString<WeeklySnapshot>(report.snapshotJson)
-        val goal = repository.getGoal()
-        val prompt = buildString {
-            appendLine("次の週次健康サマリを、低脂質ダイエットの方針で分析してください。")
-            appendLine(
-                snapshot.existingAiContract().toString(),
+        val traceId = W3cTraceContext.generateTraceId()
+        val rootSpanId = W3cTraceContext.generateSpanId()
+        val startedAtMs = System.currentTimeMillis()
+        val stages = mutableListOf<StageSpanRecord>()
+        var currentStage = "weekly_ai.rebuild"
+        var stageStartMs = startedAtMs
+        repository.diagnostics?.event("weekly_ai", "started", correlation = traceId)
+        try {
+            runCatching { refreshHabitMemory(apiKey, force = false) }
+            val report = repository.rebuildWeekly()
+            val snapshot = json.decodeFromString<WeeklySnapshot>(report.snapshotJson)
+            val goal = repository.getGoal()
+            val rebuildEndMs = System.currentTimeMillis().coerceAtLeast(stageStartMs)
+            stages += StageSpanRecord(
+                traceId = traceId,
+                spanId = W3cTraceContext.generateSpanId(),
+                parentSpanId = rootSpanId,
+                name = "weekly_ai.rebuild",
+                stage = "weekly_ai.rebuild",
+                status = "ok",
+                startEpochMillis = stageStartMs,
+                endEpochMillis = rebuildEndMs,
+                durationMs = rebuildEndMs - stageStartMs,
             )
-            appendLine(
-                "PFC週平均: たんぱく質=" +
-                        "${snapshot.proteinDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
-                        "(${snapshot.proteinEnergyPercent.energyRatio()}), " +
-                        "脂質=${snapshot.totalFatDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
-                        "(${snapshot.fatEnergyPercent.energyRatio()}), " +
-                        "炭水化物=${snapshot.carbohydrateDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
-                        "(${snapshot.carbohydrateEnergyPercent.energyRatio()})",
+
+            currentStage = "weekly_ai.gemini"
+            stageStartMs = rebuildEndMs
+            val prompt = buildString {
+                appendLine("次の週次健康サマリを、低脂質ダイエットの方針で分析してください。")
+                appendLine(
+                    snapshot.existingAiContract().toString(),
+                )
+                appendLine(
+                    "PFC週平均: たんぱく質=" +
+                            "${snapshot.proteinDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
+                            "(${snapshot.proteinEnergyPercent.energyRatio()}), " +
+                            "脂質=${snapshot.totalFatDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
+                            "(${snapshot.fatEnergyPercent.energyRatio()}), " +
+                            "炭水化物=${snapshot.carbohydrateDailyAverageGrams?.let { "${it}g" } ?: "未取得"}" +
+                            "(${snapshot.carbohydrateEnergyPercent.energyRatio()})",
+                )
+                appendLine("assistedZoneMinutesJson は実測できた運動心拍のZ1〜Z5観測分だけを表し、未観測区間は含みません。")
+                appendLine("運動後の心拍回復と28日間比較は参考観測です。運動種別・時間が揃っても速度や負荷は未確認なので、心肺機能の改善を断定してはいけません。")
+                appendLine("活動補助消費は歩数・運動種別/時間・十分な運動中心拍のみで計算した独立参考値です。" +
+                    "Xiaomiとの差は過大評価の証明ではありません。心拍カバレッジ不足時はMETのみで推定します。")
+                appendLine("目標: ${goal?.existingAiGoal()}")
+                appendLine("会話から確認済みの習慣: ${ConversationContextPolicy.memoryForModel(repository.getMemory()?.summary, goal)}")
+                appendLine("分析の軸は次の2点です。")
+                appendLine(
+                    "1) カロリー収支の比較: 摂取カロリー平均と基礎代謝・活動消費の比較レンジを対照する。" +
+                        "推定エネルギー収支そのものは端末内専用のため送っていません。",
+                )
+                appendLine(
+                    "2) 体重の推移: weightChangeKg（前週中央値比）を主に読み、" +
+                        "脂肪量・除脂肪量の前週比も補助として使う。",
+                )
+                appendLine("summaryでは、収支比較の所見と体重推移の所見を必ず両方書いてください。")
+                appendLine(
+                    "収支と体重の方向が食い違う場合は、減量を強めず、" +
+                        "未記録の食事・測定条件・水分変動の確認質問を先に出してください。",
+                )
+                appendLine("summaryとcautionにPFCのグラムとエネルギー比を含めてください。")
+                appendLine("食事内容、運動量、摂取と活動のバランス、PFCの観点から助言してください。")
+                appendLine("不明点は断定せず、clarifyingQuestionsへ先に確認したい質問を最大2件入れてください。")
+                appendLine("習慣と数値の関連は、根拠がある範囲だけhabitInsightsへ最大3件示してください。")
+            }
+            val raw = gemini.generateStructuredAdvice(
+                apiKey = apiKey,
+                model = apiKeyStore.modelId(),
+                systemInstruction = weeklyAnalysisSystemInstruction(
+                    ConversationContextPolicy.memoryForModel(repository.getMemory()?.summary, goal),
+                    goal?.existingAiProfile(),
+                ),
+                prompt = prompt,
             )
-            appendLine("assistedZoneMinutesJson は実測できた運動心拍のZ1〜Z5観測分だけを表し、未観測区間は含みません。")
-            appendLine("運動後の心拍回復と28日間比較は参考観測です。運動種別・時間が揃っても速度や負荷は未確認なので、心肺機能の改善を断定してはいけません。")
-            appendLine("活動補助消費は歩数・運動種別/時間・十分な運動中心拍のみで計算した独立参考値です。" +
-                "Xiaomiとの差は過大評価の証明ではありません。心拍カバレッジ不足時はMETのみで推定します。")
-            appendLine("目標: ${goal?.existingAiGoal()}")
-            appendLine("会話から確認済みの習慣: ${ConversationContextPolicy.memoryForModel(repository.getMemory()?.summary, goal)}")
-            appendLine("分析の軸は次の2点です。")
-            appendLine(
-                "1) カロリー収支の比較: 摂取カロリー平均と基礎代謝・活動消費の比較レンジを対照する。" +
-                    "推定エネルギー収支そのものは端末内専用のため送っていません。",
+            val modelAdvice = json.decodeFromString<AdviceResponse>(raw)
+            val merged = CoachResponseComposer.mergeStructuredAdvice(
+                modelAdvice = modelAdvice,
+                assessment = CoachAssessmentEngine.assess(snapshot),
             )
-            appendLine(
-                "2) 体重の推移: weightChangeKg（前週中央値比）を主に読み、" +
-                    "脂肪量・除脂肪量の前週比も補助として使う。",
+            val endMs = System.currentTimeMillis().coerceAtLeast(stageStartMs)
+            stages += StageSpanRecord(
+                traceId = traceId,
+                spanId = W3cTraceContext.generateSpanId(),
+                parentSpanId = rootSpanId,
+                name = "weekly_ai.gemini",
+                stage = "weekly_ai.gemini",
+                status = "ok",
+                startEpochMillis = stageStartMs,
+                endEpochMillis = endMs,
+                durationMs = endMs - stageStartMs,
             )
-            appendLine("summaryでは、収支比較の所見と体重推移の所見を必ず両方書いてください。")
-            appendLine(
-                "収支と体重の方向が食い違う場合は、減量を強めず、" +
-                    "未記録の食事・測定条件・水分変動の確認質問を先に出してください。",
+            repository.diagnostics?.recordOperationTrace(
+                category = "weekly_ai",
+                spanName = "weekly_ai.analyze",
+                traceId = traceId,
+                rootSpanId = rootSpanId,
+                startedAtMs = startedAtMs,
+                endedAtMs = endMs,
+                outcome = "success",
+                stages = stages,
+                stringAttributes = mapOf("weekly_ai.stage" to "weekly_ai.gemini"),
             )
-            appendLine("summaryとcautionにPFCのグラムとエネルギー比を含めてください。")
-            appendLine("食事内容、運動量、摂取と活動のバランス、PFCの観点から助言してください。")
-            appendLine("不明点は断定せず、clarifyingQuestionsへ先に確認したい質問を最大2件入れてください。")
-            appendLine("習慣と数値の関連は、根拠がある範囲だけhabitInsightsへ最大3件示してください。")
+            return merged
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val endMs = System.currentTimeMillis().coerceAtLeast(stageStartMs)
+            stages += StageSpanRecord(
+                traceId = traceId,
+                spanId = W3cTraceContext.generateSpanId(),
+                parentSpanId = rootSpanId,
+                name = currentStage,
+                stage = currentStage,
+                status = "error",
+                startEpochMillis = stageStartMs,
+                endEpochMillis = endMs,
+                durationMs = endMs - stageStartMs,
+                errorKind = DiagnosticErrorClassifier.classify(e),
+                exceptionType = DiagnosticErrorClassifier.sanitizeExceptionType(e),
+                appFrames = DiagnosticErrorClassifier.sanitizeAppFrames(e),
+            )
+            repository.diagnostics?.recordOperationTrace(
+                category = "weekly_ai",
+                spanName = "weekly_ai.analyze",
+                traceId = traceId,
+                rootSpanId = rootSpanId,
+                startedAtMs = startedAtMs,
+                endedAtMs = endMs,
+                outcome = "failure",
+                stages = stages,
+                stringAttributes = mapOf("weekly_ai.stage" to currentStage),
+                failedStage = currentStage,
+                error = e,
+            )
+            throw e
         }
-        val raw = gemini.generateStructuredAdvice(
-            apiKey = apiKey,
-            model = apiKeyStore.modelId(),
-            systemInstruction = weeklyAnalysisSystemInstruction(
-                ConversationContextPolicy.memoryForModel(repository.getMemory()?.summary, goal),
-                goal?.existingAiProfile(),
-            ),
-            prompt = prompt,
-        )
-        val modelAdvice = json.decodeFromString<AdviceResponse>(raw)
-        return CoachResponseComposer.mergeStructuredAdvice(
-            modelAdvice = modelAdvice,
-            assessment = CoachAssessmentEngine.assess(snapshot),
-        )
     }
 
     private suspend fun refreshHabitMemory(apiKey: String, force: Boolean) {

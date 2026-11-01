@@ -1,6 +1,7 @@
 package com.master.healthcoach.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -14,8 +15,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.master.healthcoach.HealthCoachApplication
+import com.master.healthcoach.data.diagnostics.DiagnosticsStore
+import com.master.healthcoach.data.diagnostics.SyncRunDiagnostics
 import com.master.healthcoach.data.mcp.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -25,6 +30,7 @@ fun TunnelSettingsCard() {
     val context = LocalContext.current
     val container = (context.applicationContext as HealthCoachApplication).container
     val settings = container.tunnelSettings
+    val otlpSettings = container.diagnostics.otlpSettings
     val state by TunnelService.state.collectAsState()
     var id by remember { mutableStateOf(settings.id()) }
     var key by remember { mutableStateOf("") } // credentials are never saved into SavedState/Bundle
@@ -33,13 +39,46 @@ fun TunnelSettingsCard() {
     var shares by remember { mutableStateOf(settings.permissions()) }
     var detailed by remember { mutableStateOf(container.diagnostics.detailed) }
     var capture by remember { mutableStateOf(container.diagnostics.enabled) }
+    var otlpEnabled by remember { mutableStateOf(otlpSettings.enabled) }
+    var otlpEndpoint by remember { mutableStateOf(otlpSettings.endpointUrl()) }
+    var otlpProjectId by remember { mutableStateOf(otlpSettings.gcpProjectId()) }
+    var otlpToken by remember { mutableStateOf("") } // credentials are never saved into SavedState/Bundle
+    var hasOtlpToken by remember { mutableStateOf(otlpSettings.hasToken()) }
     var message by remember { mutableStateOf("") }
     var hasKey by remember { mutableStateOf(settings.hasKey()) }
     var lastSync by remember { mutableStateOf<String?>(null) }
+    var latestRun by remember { mutableStateOf<SyncRunDiagnostics?>(null) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(state.status) { lastSync = container.database.dao().metadata("lastSyncSuccess") }
+    LaunchedEffect(state.status, message) {
+        lastSync = runCatching { container.database.dao().metadata("lastSyncSuccess") }.getOrNull()
+        latestRun = container.diagnostics.flightRecorder.syncRuns(limit = 1).firstOrNull()
+    }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) TunnelService.start(context) else message = "接続状態と停止ボタンを表示するため通知を許可してください"
+    }
+    val saveDiagnosticsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            runCatching {
+                val availability = runCatching { container.repository.availability().name }.getOrDefault("UNKNOWN")
+                val granted = runCatching { container.repository.grantedPermissions().toList() }.getOrDefault(emptyList())
+                val reportJson = container.diagnostics.exportReportJson(
+                    availability = availability,
+                    grantedPermissions = granted,
+                )
+                withContext(Dispatchers.IO) {
+                    val stream = context.contentResolver.openOutputStream(uri, "wt")
+                        ?: error("保存先のファイルを開けませんでした")
+                    stream.bufferedWriter(Charsets.UTF_8).use { it.write(reportJson) }
+                }
+            }.onSuccess {
+                message = "診断レポート（JSON）を保存しました"
+            }.onFailure {
+                message = "診断レポートの保存に失敗しました"
+            }
+        }
     }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -57,6 +96,17 @@ fun TunnelSettingsCard() {
                 listOf(15, 30, 60).forEach { duration -> FilterChip(selected = duration == minutes, onClick = { minutes = duration }, enabled = !state.running, label = { Text("${duration}分") }) }
             }
             Text("最終同期: " + (lastSync?.toLongOrNull()?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MM/dd HH:mm")) } ?: "未記録（必要なら画面上部の同期を実行）"))
+            latestRun?.let { run ->
+                val stageSummary = if (run.failedStage != null) {
+                    "失敗段階=${run.failedStage} (${run.errorKind ?: "internal"}) / 直前成功=${run.lastSuccessfulStage ?: "なし"}"
+                } else {
+                    "最終段階=${run.lastSuccessfulStage ?: "完了"}"
+                }
+                Text(
+                    "直近同期トレース: ${run.outcome} ($stageSummary) [traceId: ${run.traceId.take(12)}…]",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Text(when (state.status) {
                 "starting" -> "接続準備中"
                 "connected" -> "接続中。ChatGPTに切り替えて利用できます"
@@ -82,11 +132,95 @@ fun TunnelSettingsCard() {
             }
             TextButton(onClick = { TunnelService.stop(context); settings.clear(); id = ""; key = ""; organization = ""; hasKey = false; message = "接続設定を削除しました" }) { Text("連携設定を削除") }
             HorizontalDivider()
-            Text("端末内の診断記録", style = MaterialTheme.typography.titleMedium)
+            Text("端末内の診断記録・診断レポート", style = MaterialTheme.typography.titleMedium)
             ShareRow("処理時間・結果・操作種別を記録", capture, true) { capture = it; container.diagnostics.enabled = it }
             ShareRow("回答時の入力文脈を詳細記録（健康情報・会話を含む）", detailed, capture) { detailed = it; container.diagnostics.detailed = it }
-            Text("通常の診断に会話本文やキーは記録しません。詳細入力は暗号化し最大7日保持します。停止すると新しい記録を作成しません。")
-            TextButton(onClick = { scope.launch { runCatching { TunnelService.stopAndAwait(context); container.diagnostics.clear() }.onSuccess { message = "診断記録を削除しました" }.onFailure { message = "接続停止後にもう一度削除してください" } } }) { Text("診断記録を削除") }
+            Text("通常の診断レポートには健康実測値・会話本文・APIキーは一切含まれず、同期段階ごとの成否・件数・安全化済みエラー種別のみを出力します。")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        runCatching {
+                            val availability = runCatching { container.repository.availability().name }.getOrDefault("UNKNOWN")
+                            val granted = runCatching { container.repository.grantedPermissions().toList() }.getOrDefault(emptyList())
+                            val reportJson = container.diagnostics.exportReportJson(
+                                availability = availability,
+                                grantedPermissions = granted,
+                            )
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/json"
+                                putExtra(Intent.EXTRA_SUBJECT, DiagnosticsStore.defaultReportFileName())
+                                putExtra(Intent.EXTRA_TEXT, reportJson)
+                            }
+                            context.startActivity(Intent.createChooser(sendIntent, "診断レポートを共有"))
+                        }.onFailure {
+                            message = "診断レポートの共有準備に失敗しました"
+                        }
+                    }
+                }) { Text("診断レポートを共有") }
+                OutlinedButton(onClick = {
+                    saveDiagnosticsLauncher.launch(DiagnosticsStore.defaultReportFileName())
+                }) { Text("診断レポートを保存") }
+            }
+            TextButton(onClick = { scope.launch { runCatching { TunnelService.stopAndAwait(context); container.diagnostics.clear(); latestRun = null }.onSuccess { message = "診断記録を削除しました" }.onFailure { message = "接続停止後にもう一度削除してください" } } }) { Text("診断記録を削除") }
+            HorizontalDivider()
+            Text("外部テレメトリー送信（OpenTelemetry / GCP）", style = MaterialTheme.typography.titleMedium)
+            ShareRow("OpenTelemetryトレース送信を有効化（デフォルトOFF）", otlpEnabled, capture) {
+                otlpEnabled = it
+                if (!it) {
+                    otlpSettings.enabled = false
+                }
+            }
+            Text("有効化すると、同期段階Span・件数・エラー種別のみをOTLP/HTTPでGCP Collectorへ送信します（健康実測値・会話本文は送信されません）。")
+            OutlinedTextField(
+                value = otlpEndpoint,
+                onValueChange = { otlpEndpoint = it },
+                label = { Text("OTLP Collector URL (https://.../v1/traces)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = otlpProjectId,
+                onValueChange = { otlpProjectId = it },
+                label = { Text("GCP Project ID") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = otlpToken,
+                onValueChange = { otlpToken = it },
+                label = { Text(if (hasOtlpToken) "Ingestトークン（保存済み・変更時のみ入力）" else "Ingestトークン（任意）") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    runCatching {
+                        otlpSettings.save(
+                            enabled = otlpEnabled,
+                            endpointUrl = otlpEndpoint,
+                            bearerToken = otlpToken,
+                            gcpProjectId = otlpProjectId,
+                        )
+                    }.onSuccess {
+                        otlpToken = ""
+                        hasOtlpToken = otlpSettings.hasToken()
+                        otlpEnabled = otlpSettings.enabled
+                        message = "OpenTelemetry送信設定を保存しました"
+                    }.onFailure { err ->
+                        message = err.message ?: "OTLP設定の入力を確認してください"
+                    }
+                }) { Text("OTLP設定を保存") }
+                TextButton(onClick = {
+                    otlpSettings.clear()
+                    otlpEnabled = false
+                    otlpEndpoint = ""
+                    otlpProjectId = "health-support-ai"
+                    otlpToken = ""
+                    hasOtlpToken = false
+                    message = "OTLP設定を削除しました"
+                }) { Text("OTLP設定を削除") }
+            }
             if (message.isNotEmpty()) Text(message)
         }
     }
