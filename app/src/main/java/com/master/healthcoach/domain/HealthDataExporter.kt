@@ -132,6 +132,8 @@ data class WeeklyAiAnalysisContext(
             "それ以外の時間帯・長時間のOther Workoutは「一般運動（内容未確認）」（category=other, otherExerciseMinutes）として区別する。" +
             "strengthMinutes=0でもotherExerciseMinutes>0の場合は筋トレ未実施の確定ではなく「未確認運動あり（unverified_other_workouts_present）」として扱う。" +
             "心拍ゾーンや運動強度の実測値がない場合はトレーニング負荷を断定しない。" +
+            "運動後心拍回復は測定条件・運動終点・カバレッジ依存の参考観測で、医学的な正常判定を行わない。" +
+            "workoutComparisons28dは種目と時間だけのマッチングで、速度・負荷・気温が不明なら同条件とは断定しない。" +
             "筋力維持そのものは朝トレ日数では証明せず、月1回のパーソナルでの重量・回数で確認する。",
     val energyAndExpenditureRules: String =
         EnergyModel.INTERPRETATION + " legacyModelVersion=${EnergyModel.VERSION}; " +
@@ -365,6 +367,10 @@ data class WeeklyExerciseSessionExport(
     val assistedHeartObservedMinutes: Int? = null,
     val assistedHeartAdjustedMinutes: Int? = null,
     val assistedZoneMinutesJson: String? = null,
+    val workoutHeartAverageBpm: Double? = null,
+    val workoutHeartCoverageMinutes: Int? = null,
+    val recoveryDrop1MinBpm: Int? = null,
+    val recoveryDrop2MinBpm: Int? = null,
 )
 
 @Serializable
@@ -884,6 +890,10 @@ object HealthDataExporter {
                     assistedHeartObservedMinutes = session.assistedHeartObservedMinutes,
                     assistedHeartAdjustedMinutes = session.assistedHeartAdjustedMinutes,
                     assistedZoneMinutesJson = session.assistedZoneMinutesJson,
+                    workoutHeartAverageBpm = session.workoutHeartAverageBpm,
+                    workoutHeartCoverageMinutes = session.workoutHeartCoverageMinutes,
+                    recoveryDrop1MinBpm = session.recoveryDrop1MinBpm,
+                    recoveryDrop2MinBpm = session.recoveryDrop2MinBpm,
                 )
             }
     }
