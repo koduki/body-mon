@@ -10,6 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         DailyHealthSummaryEntity::class,
+        HeartRateSampleEntity::class,
         BodyCompositionEntity::class,
         HealthSourceStatusEntity::class,
         ExerciseSessionEntity::class,
@@ -20,7 +21,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ConversationMemoryEntity::class,
         AppEventEntity::class, ResponseEvidenceEntity::class, ReportArchiveEntity::class, AppMetadataEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class HealthCoachDatabase : RoomDatabase() {
@@ -43,9 +44,28 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 MIGRATION_8_9,
                 MIGRATION_9_10,
                 MIGRATION_10_11,
+                MIGRATION_11_12,
             ).addCallback(object : Callback() {
-                override fun onCreate(db: SupportSQLiteDatabase) { installRevisionTriggers(db) }
+                override fun onCreate(db: SupportSQLiteDatabase) { installRevisionTriggers(db); installHeartRevisionTriggers(db) }
             }).build()
+
+        internal val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS heart_rate_samples (" +
+                    "sourceRecordId TEXT NOT NULL, timestampEpochMillis INTEGER NOT NULL, " +
+                    "bpm INTEGER NOT NULL, dataOrigin TEXT NOT NULL, " +
+                    "sessionId TEXT, phase TEXT NOT NULL, " +
+                    "PRIMARY KEY(sourceRecordId, timestampEpochMillis, bpm))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_heart_rate_samples_timestampEpochMillis ON heart_rate_samples(timestampEpochMillis)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_heart_rate_samples_sessionId_timestampEpochMillis ON heart_rate_samples(sessionId, timestampEpochMillis)")
+                installHeartRevisionTriggers(db)
+            }
+        }
+        private fun installHeartRevisionTriggers(db: SupportSQLiteDatabase) {
+            listOf("INSERT", "UPDATE", "DELETE").forEach { operation ->
+                db.execSQL("CREATE TRIGGER IF NOT EXISTS revision_heart_rate_samples_$operation AFTER $operation ON heart_rate_samples BEGIN UPDATE app_metadata SET value = CAST(value AS INTEGER) + 1 WHERE `key` = 'revision'; END")
+            }
+        }
 
         internal val MIGRATION_10_11 = object : Migration(10, 11) {
             override fun migrate(db: SupportSQLiteDatabase) {
