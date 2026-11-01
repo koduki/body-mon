@@ -21,10 +21,13 @@ class DiagnosticsStore(context: Context, private val dao: HealthCoachDao) {
 
     suspend fun event(category: String, outcome: String, durationMs: Long = 0, correlation: String = "", counters: Map<String, Long> = emptyMap(), error: Throwable? = null) {
         if (!enabled) return
-        require(category in CATEGORIES && outcome in OUTCOMES)
-        require(counters.keys.all { it in COUNTERS })
-        val safeCorrelation = correlation.takeIf { it.matches(Regex("[a-zA-Z0-9_-]{0,64}")) }.orEmpty()
+        // Diagnostics must never cause a successful Health Connect sync to fail.
+        // Validate inside the best-effort block so future counter additions
+        // cannot accidentally break the primary user operation.
         try {
+            require(category in CATEGORIES && outcome in OUTCOMES)
+            require(counters.keys.all { it in COUNTERS })
+            val safeCorrelation = correlation.takeIf { it.matches(Regex("[a-zA-Z0-9_-]{0,64}")) }.orEmpty()
             dao.insertEvent(AppEventEntity(timestamp = System.currentTimeMillis(), category = category, outcome = outcome,
                 durationMs = durationMs.coerceAtLeast(0), correlationId = safeCorrelation,
                 attributesJson = buildJsonObject {
@@ -72,7 +75,7 @@ class DiagnosticsStore(context: Context, private val dao: HealthCoachDao) {
         const val DAY = 86_400_000L
         val CATEGORIES = setOf("sync", "report", "chat", "weekly_ai", "ui_sync", "ui_goal", "ui_tab", "tunnel", "mcp")
         val OUTCOMES = setOf("started", "success", "failure", "skipped_permission", "stopped", "expired", "locked", "network", "auth", "os_timeout", "task_removed", "deleted", "replaced", "permission_denied")
-        val COUNTERS = setOf("days", "body", "sessions", "meals", "tools", "bytes", "polls", "emptyPolls", "retries", "errors", "batteryStart", "batteryEnd", "chargingStart", "chargingEnd", "cpuMs", "tab")
+        val COUNTERS = setOf("days", "body", "sessions", "heartSamples", "meals", "tools", "bytes", "polls", "emptyPolls", "retries", "errors", "batteryStart", "batteryEnd", "chargingStart", "chargingEnd", "cpuMs", "tab")
         fun id(): String = UUID.randomUUID().toString()
     }
 }
