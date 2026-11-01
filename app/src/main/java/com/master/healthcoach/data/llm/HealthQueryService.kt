@@ -132,7 +132,11 @@ class HealthQueryService(
                 "referenceNote",
                 EnergyModel.INTERPRETATION + " modelVersion=${EnergyModel.VERSION}",
             )
+            put("assistedEnergyModelVersion", com.master.healthcoach.domain.ActivityEnergyAssist.VERSION)
+            put("assistedEnergyInterpretation", com.master.healthcoach.domain.ActivityEnergyAssist.INTERPRETATION)
             summary?.let {
+                number("assistedActiveCaloriesDailyAverage", it.assistedDailyAverageKcal)
+                put("assistedValidDays", it.assistedValidDays)
                 number("referenceStepModelActiveKcalDailyAverage", it.stepModelDailyAverageKcal)
                 number("referenceEvaluatedActiveKcalDailyAverage", it.evaluatedDailyAverageKcal)
                 number("referenceActiveRangeLowKcal", it.range.lowKcal)
@@ -156,6 +160,14 @@ class HealthQueryService(
                         number("distanceMeters", item.distanceMeters)
                         put("cyclingMinutes", item.cyclingMinutes)
                         number("activeCaloriesKcal", item.activeCaloriesKcal)
+                        number("assistedActiveCaloriesKcal", item.assistedActiveCaloriesKcal)
+                        number("assistedWalkingCaloriesKcal", item.assistedWalkingCaloriesKcal)
+                        number("assistedExerciseCaloriesKcal", item.assistedExerciseCaloriesKcal)
+                        item.assistedHeartObservedMinutes?.let { put("assistedHeartObservedMinutes", it) }
+                        item.assistedHeartAdjustedMinutes?.let { put("assistedHeartAdjustedMinutes", it) }
+                        item.assistedZoneMinutesJson?.let { put("assistedZoneMinutesJson", it) }
+                        put("referenceMethod", if (item.assistedActiveCaloriesKcal != null)
+                            "activity_met_bounded_workout_hr" else "legacy_step_model")
                         put("metricOriginsJson", item.metricOriginsJson)
                         put("updatedAtEpochMillis", item.updatedAtEpochMillis)
                         estimate?.let {
@@ -231,6 +243,10 @@ class HealthQueryService(
                         put("exercise", session.exerciseLabel)
                         put("category", session.category)
                         put("durationMinutes", session.durationMinutes)
+                        number("assistedActiveCaloriesKcal", session.assistedActiveCaloriesKcal)
+                        session.assistedHeartObservedMinutes?.let { put("assistedHeartObservedMinutes", it) }
+                        session.assistedHeartAdjustedMinutes?.let { put("assistedHeartAdjustedMinutes", it) }
+                        session.assistedZoneMinutesJson?.let { put("assistedZoneMinutesJson", it) }
                         put("endEpochMillis", session.endEpochMillis)
                         val rangeStart = from.atStartOfDay(zoneIdProvider()).toInstant().toEpochMilli()
                         val rangeEnd = to.plusDays(1).atStartOfDay(zoneIdProvider()).toInstant().toEpochMilli()
