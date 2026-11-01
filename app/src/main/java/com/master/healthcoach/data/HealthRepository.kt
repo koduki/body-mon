@@ -91,7 +91,13 @@ class HealthRepository(
             earliestDaily == null || earliestDaily > today.minusDays(89) ||
                 dao.needsMetricBackfill(today.minusDays(89).toString())
             )
-        val bundle = gateway.sync(days = if (needsInitialBackfill) 90 else 31)
+        val energyGoal = dao.getGoal()
+        val bundle = gateway.sync(
+            days = if (needsInitialBackfill) 90 else 31,
+            heightCm = energyGoal?.heightCm,
+            sex = energyGoal?.sex,
+            ageYears = energyGoal?.age,
+        )
         database.withTransaction {
             val existing = dao.getDaily(
                 bundle.daily.first().date, bundle.daily.last().date,
