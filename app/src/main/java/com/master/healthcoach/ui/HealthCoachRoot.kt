@@ -750,6 +750,14 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            session.assistedActiveCaloriesKcal?.let {
+                                Text("活動補助推定 ${it.roundToLong()} kcal（運動中心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分）",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            session.assistedZoneMinutesJson.heartZonesLabel()?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                         Text("${session.durationMinutes}分")
                     }
@@ -1166,6 +1174,14 @@ private fun TrendsScreen(state: MainUiState) {
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                    session.assistedActiveCaloriesKcal?.let {
+                                        Text("補助推定 ${it.roundToLong()} kcal／心拍補正 ${session.assistedHeartAdjustedMinutes ?: 0}分",
+                                            style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    session.assistedZoneMinutesJson.heartZonesLabel()?.let {
+                                        Text(it, style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                                 Text("${session.durationMinutes}分")
                             }
@@ -1748,6 +1764,7 @@ private fun WeeklyScreen(
                                     "独立補助推定 ${it.kcal("/日")}（${report.assistedActiveValidDays}日）"
                                 },
                                 "運動中心拍観測 ${report.assistedHeartObservedMinutes}分・MET補正適用 ${report.assistedHeartAdjustedMinutes}分",
+                                report.assistedZoneMinutesJson.heartZonesLabel(),
                             ).joinToString("・"),
                         )
                         Text(
@@ -2871,4 +2888,14 @@ private fun EnergyRange.balanceRangeLabel(): String {
     val low = lowKcal.roundToLong()
     val high = highKcal.roundToLong()
     return if (low == high) "${signed(lowKcal)} kcal" else "${signed(lowKcal)} 〜 ${signed(highKcal)} kcal"
+}
+
+/** Heart-zone counts are observed minutes only (Z1..Z5), not exercise duration. */
+private fun String?.heartZonesLabel(): String? {
+    val numbers = this?.removePrefix("[")?.removeSuffix("]")
+        ?.split(",")?.mapNotNull { it.trim().toIntOrNull() } ?: return null
+    if (numbers.size != 5 || numbers.all { it == 0 }) return null
+    return "運動中心拍ゾーン観測 " + numbers.mapIndexed { index, mins ->
+        "Z${index + 1} ${mins}分"
+    }.joinToString("・")
 }
