@@ -2185,6 +2185,94 @@ private fun SectionHeader(title: String, subtitle: String) {
 }
 
 @Composable
+private fun ActivityEnergyComparisonCard(
+    independentKcal: Double?,
+    deviceKcal: Double?,
+    adjustedHeartMinutes: Int? = null,
+    walkingKcal: Double? = null,
+    workoutKcal: Double? = null,
+    basalKcal: Double? = null,
+    title: String,
+    suffix: String = "",
+) {
+    val display = ActivityEnergyDisplayPolicy.compare(independentKcal, deviceKcal)
+    var expanded by rememberSaveable(title) { mutableStateOf(false) }
+    val maximum = maxOf(display.independentKcal ?: 0.0, display.deviceKcal ?: 0.0, 1.0)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(
+                display.primaryKcal?.let { "${it.roundToLong()} kcal$suffix" } ?: "未取得",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                when (display.source) {
+                    ActivityEnergyDisplayPolicy.Source.INDEPENDENT -> "独立推定を主表示（歩数の重複除外＋運動種別・時間）"
+                    ActivityEnergyDisplayPolicy.Source.XIAOMI -> "Xiaomi推定のみ・独立推定は未算出"
+                    ActivityEnergyDisplayPolicy.Source.MISSING -> "推定可能な記録がありません。同期状態を確認してください"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            if (display.hasComparison) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("独立推定", style = MaterialTheme.typography.labelMedium)
+                    Text("${display.independentKcal!!.roundToLong()} kcal$suffix", style = MaterialTheme.typography.labelMedium)
+                }
+                LinearProgressIndicator(
+                    progress = { (display.independentKcal!! / maximum).toFloat().coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Xiaomi推定", style = MaterialTheme.typography.labelMedium)
+                    Text("${display.deviceKcal!!.roundToLong()} kcal$suffix", style = MaterialTheme.typography.labelMedium)
+                }
+                LinearProgressIndicator(
+                    progress = { (display.deviceKcal!! / maximum).toFloat().coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                    color = MaterialTheme.colorScheme.tertiary,
+                )
+                Text(
+                    "差：Xiaomi − 独立推定 ${signed(display.differenceKcal!!)} kcal$suffix",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Text(
+                    "2つの推定方法の比較です。大小の幅は信頼区間ではなく、平均値も正解とはみなしません。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            } else if (display.source == ActivityEnergyDisplayPolicy.Source.XIAOMI) {
+                Text("独立推定には歩数・体重・身長などの記録が必要です。",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            if (display.source != ActivityEnergyDisplayPolicy.Source.MISSING) {
+                TextButton(onClick = { expanded = !expanded }) {
+                    Text(if (expanded) "計算方法を閉じる" else "内訳・計算方法を見る")
+                }
+                if (expanded) {
+                    walkingKcal?.let { Text("歩行分（独立推定） ${it.roundToLong()} kcal") }
+                    workoutKcal?.let { Text("運動分（独立推定） ${it.roundToLong()} kcal") }
+                    adjustedHeartMinutes?.let { Text("運動中心拍を用いた補正 ${it}分") }
+                    basalKcal?.let { Text("基礎代謝（別項目） ${it.roundToLong()} kcal/日") }
+                    Text(
+                        "独立推定は運動と重なる歩数を除外し、種別・時間からMETで活動消費を計算します。" +
+                            "十分な運動中心拍がある場合のみ限定的に補正します。" +
+                            "未記録活動や負荷を完全には反映しません。Xiaomiは別方式の推定です。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun MetricCard(
     title: String,
     value: String,
