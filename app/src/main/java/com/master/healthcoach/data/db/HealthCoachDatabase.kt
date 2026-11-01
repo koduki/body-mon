@@ -46,7 +46,7 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 MIGRATION_10_11,
                 MIGRATION_11_12,
             ).addCallback(object : Callback() {
-                override fun onCreate(db: SupportSQLiteDatabase) { installRevisionTriggers(db); installHeartRevisionTriggers(db) }
+                override fun onCreate(db: SupportSQLiteDatabase) { installRevisionTriggers(db) }
             }).build()
 
         internal val MIGRATION_11_12 = object : Migration(11, 12) {
@@ -64,12 +64,6 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                     "recoveryDrop1MinBpm INTEGER",
                     "recoveryDrop2MinBpm INTEGER",
                 ).forEach { db.execSQL("ALTER TABLE exercise_sessions ADD COLUMN $it") }
-                installHeartRevisionTriggers(db)
-            }
-        }
-        private fun installHeartRevisionTriggers(db: SupportSQLiteDatabase) {
-            listOf("INSERT", "UPDATE", "DELETE").forEach { operation ->
-                db.execSQL("CREATE TRIGGER IF NOT EXISTS revision_heart_rate_samples_$operation AFTER $operation ON heart_rate_samples BEGIN UPDATE app_metadata SET value = CAST(value AS INTEGER) + 1 WHERE `key` = 'revision'; END")
             }
         }
 
