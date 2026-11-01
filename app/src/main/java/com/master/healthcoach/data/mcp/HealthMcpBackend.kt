@@ -40,7 +40,7 @@ class HealthMcpBackend(
             val zone = ZoneId.systemDefault()
             val start = from.atStartOfDay(zone).toInstant().toEpochMilli()
             val end = to.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
-            val limit = number(args, "limit", 50, 1, 100)
+            val limit = number(args, "limit", 50, 1, if (name == "get_heart_rate_series") 500 else 100)
             val fingerprint = digest(name + JsonObject(args.filterKeys { it != "cursor" }.toSortedMap()).toString())
             val cursor = decodeCursor(args.string("cursor"), revision, fingerprint)
             var next: String? = null
@@ -57,6 +57,63 @@ class HealthMcpBackend(
                     put("limitations", "BIA and energy expenditure are estimates. Origin candidates are not proven contributors. No automatic Health Connect refresh. Use GitHub at commitSha for code investigation.")
                 }
                 "get_profile_and_goals" -> json.encodeToJsonElement(dao.getGoal())
+                "get_heart_rate_series" -> {
+                    val sessionId = args.string("sessionId")
+                    // Month-wide raw data can be large. Use indexed paging or 1..60 minute buckets.
+                    val resolution = number(args, "resolutionMinutes", 1, 0, 60)
+                    val pageSize = number(args, "limit", 120, 1, 500)
+                    val total = dao.countHeartSamples(start, end + 1, sessionId)
+                    if (resolution == 0) {
+                        val token = if (cursor.isBlank()) emptyList() else cursor.split('|', limit = 4)
+                        if (token.isNotEmpty() && (token.size != 4 || token[0] != "r")) throw McpFailure("INVALID_CURSOR")
+                        val afterMs = token.getOrNull(1)?.toLongOrNull() ?: if (token.isEmpty()) Long.MIN_VALUE else throw McpFailure("INVALID_CURSOR")
+                        val afterSource = token.getOrNull(2).orEmpty()
+                        val afterBpm = token.getOrNull(3)?.toLongOrNull() ?: if (token.isEmpty()) -1L else throw McpFailure("INVALID_CURSOR")
+                        val rows = dao.pageHeartSamples(start, end + 1, sessionId, afterMs, afterSource, afterBpm, pageSize + 1)
+                        if (rows.size > pageSize) {
+                            val last = rows[pageSize - 1]
+                            next = "r|${last.timestampEpochMillis}|${last.sourceRecordId}|${last.bpm}"
+                        }
+                        buildJsonObject {
+                            put("mode", "raw"); put("resolutionMinutes", 0)
+                            put("matchingSampleCount", total); put("workoutSessionIdFilter", sessionId)
+                            put("samples", buildJsonArray {
+                                rows.take(pageSize).forEach { sample -> add(buildJsonObject {
+                                    put("timestampEpochMillis", sample.timestampEpochMillis)
+                                    put("bpm", sample.bpm)
+                                    put("origin", sample.dataOrigin)
+                                    put("sessionId", sample.sessionId?.let(::JsonPrimitive) ?: JsonNull)
+                                    put("phase", sample.phase)
+                                }) }
+                            })
+                            put("qualityNote", "Record-linked original samples. 'post_workout' is a 3-minute time window after a recorded session; 'unclassified' is not resting HR. Sensor artefacts may exist. No gaps are interpolated.")
+                        }
+                    } else {
+                        val bucketMs = resolution * 60_000L
+                        val parts = if (cursor.isBlank()) emptyList() else cursor.split('|', limit = 2)
+                        if (parts.isNotEmpty() && (parts.size != 2 || parts[0] != "b")) throw McpFailure("INVALID_CURSOR")
+                        val after = parts.getOrNull(1)?.toLongOrNull() ?: if (parts.isEmpty()) -1L else throw McpFailure("INVALID_CURSOR")
+                        val rows = dao.pageHeartBuckets(start, end + 1, sessionId, bucketMs, after, pageSize + 1)
+                        if (rows.size > pageSize) {
+                            val last = rows[pageSize - 1]
+                            next = "b|${last.bucketStartMillis / bucketMs}"
+                        }
+                        buildJsonObject {
+                            put("mode", "bucket"); put("resolutionMinutes", resolution)
+                            put("matchingSampleCount", total); put("workoutSessionIdFilter", sessionId)
+                            put("buckets", buildJsonArray {
+                                rows.take(pageSize).forEach { item -> add(buildJsonObject {
+                                    put("startEpochMillis", item.bucketStartMillis)
+                                    put("averageBpm", item.averageBpm)
+                                    put("minimumBpm", item.minimumBpm)
+                                    put("maximumBpm", item.maximumBpm)
+                                    put("sampleCount", item.sampleCount)
+                                }) }
+                            })
+                            put("qualityNote", "Observed buckets only; gaps are not interpolated. Unfiltered buckets may mix activity phases and must not be interpreted as resting HR.")
+                        }
+                    }
+                }
                 "get_health_metrics", "get_data_quality" -> {
                     val pageFrom = if (cursor.isBlank()) from else runCatching { LocalDate.parse(cursor) }.getOrElse { throw McpFailure("INVALID_CURSOR") }
                     if (pageFrom !in from..to) throw McpFailure("INVALID_CURSOR")
@@ -126,7 +183,7 @@ class HealthMcpBackend(
                 }
                 "get_app_diagnostics" -> buildJsonObject {
                     put("appVersion", BuildConfig.VERSION_NAME); put("commitSha", BuildConfig.COMMIT_SHA); put("sdkInt", Build.VERSION.SDK_INT)
-                    put("databaseVersion", 10); put("policyVersion", ConversationContextPolicy.VERSION)
+                    put("databaseVersion", 12); put("policyVersion", ConversationContextPolicy.VERSION)
                     put("grantedPermissions", json.encodeToJsonElement(granted)); put("captureEnabled", diagnostics.enabled); put("detailedCapture", diagnostics.detailed)
                     val events = dao.events(start, end, "", 0, 10001)
                     put("eventCount", events.size); put("sampleLimited", events.size > 10000)
@@ -163,7 +220,7 @@ class HealthMcpBackend(
                 }
                 else -> throw McpFailure("UNKNOWN_TOOL")
             }
-            val periodFiltered = name in setOf("get_health_metrics", "get_data_quality", "list_weekly_reports", "search_conversations", "get_app_diagnostics", "list_app_events")
+            val periodFiltered = name in setOf("get_heart_rate_series", "get_health_metrics", "get_data_quality", "list_weekly_reports", "search_conversations", "get_app_diagnostics", "list_app_events")
             if (name == "get_weekly_report") {
                 val snapshot = (data as? JsonObject)?.get("snapshot") as? JsonObject
                 effectiveFrom = snapshot?.string("weekStart").orEmpty()
