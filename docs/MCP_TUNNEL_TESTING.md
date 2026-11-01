@@ -25,6 +25,17 @@ OpenAI Platformで個人専用トンネルを作成し、利用権限を持つ�
 - 再起動後は停止状態。設定を削除したらキーの再入力が必要。
 - 認証を失効させると再試行を続けず停止する。
 
+## 心拍時系列と運動分析の実機確認
+
+1. Mi Fitness/Health Connectを同期後、body-monで同期し、get_app_contextでcommitShaと最終同期時刻を確認。
+2. get_heart_rate_seriesを運動のある1日、resolutionMinutes=1で呼ぶ。matchingSampleCountとbucketsとnextCursorを確認。resolutionMinutes=0では各timestampEpochMillis、bpm、origin、phase、sessionIdが返る。
+3. 運動セッションIDで再取得し、workout/post_workoutの時間帯がMi Fitnessの記録と一致するか照合する。unclassifiedは安静時心拍ではない。
+4. 運動終了後1/2分の十分な心拍がない場合、recoveryDrop1MinBpm/recoveryDrop2MinBpmがnullになることを確認する。0や正常値とは扱わない。
+5. get_workout_hr_comparisonは近7日と先21日の双方に同種目・近い時間で2件以上ない場合、比較配列が空になる。速度・負荷は一致を保証しない。
+6. 同じ期間を再同期し、重複記録が増えないこと、古いページカーソルがSTALE_CURSORになること、全データ削除で生心拍も消えることを確認。
+7. DB v11→v12アップグレードで既存データが維持されること、90日より古い心拍が削除されることを確認。
+8. 運動外心拍が同期されない場合、MCPにも表示されないことを確認。欠測を0bpmにしない。
+
 ## 診断
 
 - 同期してsyncの開始/成功と種別件数を取得する。権限不足で定期同期がスキップされた場合はskipped_permissionになる。
