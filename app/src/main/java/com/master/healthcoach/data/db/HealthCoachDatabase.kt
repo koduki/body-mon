@@ -20,7 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ConversationMemoryEntity::class,
         AppEventEntity::class, ResponseEvidenceEntity::class, ReportArchiveEntity::class, AppMetadataEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 abstract class HealthCoachDatabase : RoomDatabase() {
@@ -42,9 +42,29 @@ abstract class HealthCoachDatabase : RoomDatabase() {
                 MIGRATION_7_8,
                 MIGRATION_8_9,
                 MIGRATION_9_10,
+                MIGRATION_10_11,
             ).addCallback(object : Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) { installRevisionTriggers(db) }
             }).build()
+
+        internal val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                listOf(
+                    "assistedActiveCaloriesKcal REAL",
+                    "assistedWalkingCaloriesKcal REAL",
+                    "assistedExerciseCaloriesKcal REAL",
+                    "assistedHeartObservedMinutes INTEGER",
+                    "assistedHeartAdjustedMinutes INTEGER",
+                    "assistedZoneMinutesJson TEXT",
+                ).forEach { db.execSQL("ALTER TABLE daily_health_summary ADD COLUMN $it") }
+                listOf(
+                    "assistedActiveCaloriesKcal REAL",
+                    "assistedHeartObservedMinutes INTEGER",
+                    "assistedHeartAdjustedMinutes INTEGER",
+                    "assistedZoneMinutesJson TEXT",
+                ).forEach { db.execSQL("ALTER TABLE exercise_sessions ADD COLUMN $it") }
+            }
+        }
 
         internal val MIGRATION_9_10 = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
