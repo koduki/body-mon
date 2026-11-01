@@ -566,7 +566,7 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
             }
         }
-        item {
+        if (todayDaily?.intakeCaloriesKcal != null) item {
             Card {
                 DailyPfcSummary(
                     title = "1日のPFC",
@@ -575,18 +575,22 @@ private fun DashboardScreen(state: MainUiState, onSync: () -> Unit) {
                 )
             }
         }
-        if (todayMeals.isEmpty()) {
+        val usableTodayMeals = todayMeals.filter { meal ->
+            meal.intakeCaloriesKcal != null || meal.proteinGrams != null ||
+                meal.totalFatGrams != null || meal.carbohydrateGrams != null
+        }
+        if (usableTodayMeals.isEmpty()) {
             item {
                 EmptyCard(
-                    "今日の栄養記録はありません",
+                    "今日の栄養記録は未取得",
                     "あすけんから連携された日次の摂取カロリー・PFCを表示します。食事時刻・区分・回数は未取得です",
                 )
             }
         } else {
             item {
-                MealPfcChartCard(todayMeals)
+                MealPfcChartCard(usableTodayMeals)
             }
-            items(todayMeals, key = { it.recordId }) { meal ->
+            items(usableTodayMeals, key = { it.recordId }) { meal ->
                 MealPfcRow(meal)
             }
         }
