@@ -35,7 +35,7 @@ class HealthMcpBackend(
         val result = db.withTransaction {
             val revision = dao.metadata("revision").orEmpty()
             val today = LocalDate.now()
-            val to = date(args, "to", today)
+            val to = date(args, "to", if (name == "get_workout_hr_comparison") today.minusDays(1) else today)
             val from = date(args, "from", if (name == "get_heart_rate_series") to else to.minusDays(27))
             if (from > to || ChronoUnit.DAYS.between(from, to) >= 90 || to > today) throw McpFailure("INVALID_RANGE")
             val zone = ZoneId.systemDefault()
