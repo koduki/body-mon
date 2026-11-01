@@ -43,6 +43,13 @@ data class DailyHealthSummaryEntity(
     val heartRateOutsideExerciseSamples: Int? = null,
     @ColumnInfo(defaultValue = "0") val hikingMinutes: Long = 0,
     @ColumnInfo(defaultValue = "0") val hiitMinutes: Long = 0,
+    /** Independently estimated activity kcal; never overwrite the Xiaomi field. */
+    val assistedActiveCaloriesKcal: Double? = null,
+    val assistedWalkingCaloriesKcal: Double? = null,
+    val assistedExerciseCaloriesKcal: Double? = null,
+    val assistedHeartObservedMinutes: Int? = null,
+    val assistedHeartAdjustedMinutes: Int? = null,
+    val assistedZoneMinutesJson: String? = null,
     val dataOrigins: String,
     val updatedAtEpochMillis: Long,
 )
@@ -91,6 +98,10 @@ data class ExerciseSessionEntity(
     val category: String,
     val durationMinutes: Long,
     val dataOrigin: String,
+    val assistedActiveCaloriesKcal: Double? = null,
+    val assistedHeartObservedMinutes: Int? = null,
+    val assistedHeartAdjustedMinutes: Int? = null,
+    val assistedZoneMinutesJson: String? = null,
 )
 
 @Serializable
