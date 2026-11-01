@@ -583,18 +583,19 @@ class HealthConnectGateway(private val context: Context) {
                 it.startTime.toEpochMilli(), it.endTime.toEpochMilli(), it.exerciseType
             )
         }
-        val allObservedHeart = heartRateRecords.flatMap { record ->
-            record.samples.map { sample ->
-                WorkoutHeartAnalytics.Heart(sample.time.toEpochMilli(), sample.beatsPerMinute)
-            }
-        }
         val heartRateSamples = heartRateRecords.flatMap { record ->
             val id = "${record.metadata.dataOrigin.packageName}:${record.metadata.id}"
+            // Restrict association candidates to the Health Connect record's time span
+            // rather than scanning all workouts for every individual heart sample.
+            val possibleWorkouts = workoutsForAssociation.filter {
+                it.startMs <= record.endTime.toEpochMilli() + WorkoutHeartAnalytics.RECOVERY_WINDOW_MS &&
+                    it.endMs + WorkoutHeartAnalytics.RECOVERY_WINDOW_MS >= record.startTime.toEpochMilli()
+            }
             record.samples.mapNotNull { point ->
                 val millis = point.time.toEpochMilli()
                 if (millis < start.toEpochMilli() || millis >= end.toEpochMilli()) null
                 else {
-                    val association = WorkoutHeartAnalytics.associate(millis, workoutsForAssociation)
+                    val association = WorkoutHeartAnalytics.associate(millis, possibleWorkouts)
                     HeartRateSampleEntity(
                         sourceRecordId = id, timestampEpochMillis = millis,
                         bpm = point.beatsPerMinute,
@@ -603,13 +604,22 @@ class HealthConnectGateway(private val context: Context) {
                     )
                 }
             }
-        }.distinctBy { Triple(it.sourceRecordId, it.timestampEpochMillis, it.bpm) }
+        }
+        // The Room composite key deduplicates overlapping Health Connect records
+        // on upsert. Avoid retaining a second large in-memory distinctBy set.
         val exerciseSessions = exercises.map { session ->
             val workout = WorkoutHeartAnalytics.Workout(
                 "${session.metadata.dataOrigin.packageName}:${session.metadata.id}",
                 session.startTime.toEpochMilli(), session.endTime.toEpochMilli(), session.exerciseType
             )
-            val heart = WorkoutHeartAnalytics.recovery(workout, allObservedHeart)
+            val relatedHeart = heartRateRecords.asSequence()
+                .filter { it.endTime.toEpochMilli() >= workout.startMs &&
+                    it.startTime.toEpochMilli() <= workout.endMs + WorkoutHeartAnalytics.RECOVERY_WINDOW_MS }
+                .flatMap { it.samples.asSequence() }
+                .map { WorkoutHeartAnalytics.Heart(it.time.toEpochMilli(), it.beatsPerMinute) }
+                .filter { it.timeMs >= workout.startMs && it.timeMs <= workout.endMs + WorkoutHeartAnalytics.RECOVERY_WINDOW_MS }
+                .toList()
+            val heart = WorkoutHeartAnalytics.recovery(workout, relatedHeart)
             val origin = session.metadata.dataOrigin.packageName
             ExerciseSessionEntity(
                 recordId = "$origin:${session.metadata.id}",
